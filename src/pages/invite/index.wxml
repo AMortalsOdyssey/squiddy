@@ -1,0 +1,44 @@
+<view class="page"
+  ><view wx:if="{{local}}" class="local-banner"
+    >本地演练 · 口令仅在本机演练角色之间有效</view
+  ><view class="eyebrow"
+    >{{publicMode?'分享一桌好饭':'有人，想和你一起吃饭'}}</view
+  ><view class="title">{{publicMode?'这顿吃什么':'来厨房坐坐'}}</view
+  ><view wx:if="{{!publicMode && !preview}}" class="card"
+    ><view class="label">朋友发来的邀请口令</view
+    ><input
+      class="input"
+      maxlength="64"
+      value="{{token}}"
+      placeholder="粘贴邀请口令"
+      bindinput="input"
+    /><button
+      class="primary"
+      bindtap="resolve"
+      disabled="{{!token||loading}}"
+      loading="{{loading}}"
+    >
+      看看是哪一顿
+    </button></view
+  ><view wx:if="{{error}}" class="note">{{error}}</view
+  ><view wx:if="{{preview}}" class="hero"
+    ><view class="eyebrow inverse">{{preview.kitchen_name || '菜单摘要'}}</view
+    ><view class="hero-title">{{preview.title}}</view
+    ><view wx:if="{{when}}">{{when}}</view></view
+  ><view wx:if="{{preview}}" class="card"
+    ><view class="form-row" wx:for="{{preview.dishes}}" wx:key="index"
+      ><text>{{item.name}}</text
+      ><text class="muted">{{item.category_name}}</text></view
+    ><view class="muted"
+      >{{publicMode?'这是一份公开摘要，不包含成员、点菜记录或加入权限。':'确认后会以普通成员身份加入厨房和本餐。你的备注只给接单厨师看。'}}</view
+    ><button
+      wx:if="{{!publicMode}}"
+      class="primary"
+      bindtap="accept"
+      loading="{{busy}}"
+      disabled="{{busy}}"
+    >
+      确认加入，开始点菜
+    </button></view
+  ></view
+>

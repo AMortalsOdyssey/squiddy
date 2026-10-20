@@ -1,0 +1,42 @@
+{
+  "pages": [
+    "pages/menu/index",
+    "pages/meal/index",
+    "pages/me/index",
+    "pages/kitchen/index",
+    "pages/editor/index",
+    "pages/publish/index",
+    "pages/recommend/index",
+    "pages/invite/index",
+    "pages/settings/index",
+    "pages/poster/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "鱿鱼须须",
+    "navigationBarBackgroundColor": "#FFFEFA",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#F6F3EB"
+  },
+  "tabBar": {
+    "color": "#657168",
+    "selectedColor": "#244B3B",
+    "backgroundColor": "#FFFEFA",
+    "list": [
+      {
+        "pagePath": "pages/menu/index",
+        "text": "菜单"
+      },
+      {
+        "pagePath": "pages/meal/index",
+        "text": "饭局"
+      },
+      {
+        "pagePath": "pages/me/index",
+        "text": "我的"
+      }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

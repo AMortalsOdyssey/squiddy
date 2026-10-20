@@ -1,0 +1,293 @@
+<view wx:if="{{publicMode}}" class="page"
+  ><view class="eyebrow">公开菜单摘要</view
+  ><view class="title">{{publicPreview.title||'这一桌好饭'}}</view
+  ><view wx:if="{{error}}" class="note">{{error}}</view
+  ><view class="card row" wx:for="{{publicPreview.dishes}}" wx:key="index"
+    ><text>{{item.name}}</text
+    ><text class="muted">{{item.category_name}}</text></view
+  ><view class="muted">这份摘要不包含成员、邀请口令或价格。</view></view
+><block wx:else
+  ><view class="page"
+    ><view wx:if="{{local}}" class="local-banner"
+      >本地演练 · 提交和通知不会发送给真实朋友</view
+    ><view class="eyebrow">这一顿，一起安排</view>
+    <view wx:if="{{loading}}" class="empty">正在看看这一顿…</view
+    ><view wx:elif="{{error}}" class="card"
+      >{{error}}<button class="secondary" bindtap="refresh">重试</button></view
+    ><view wx:elif="{{!meal}}" class="card"
+      >{{pollFailed?'读取失败，页面已清除旧数据，请重试。':'还没有选择饭局，先去厨房看看吧。'}}<button
+        class="primary"
+        bindtap="back"
+      >
+        回到菜单
+      </button></view
+    >
+    <block wx:else
+      ><view class="title">{{meal.title}}</view
+      ><view class="row"
+        ><text class="tag">{{status}}</text
+        ><text class="muted">{{when}}</text></view
+      ><view class="muted deadline">点菜截止：{{cutoff}}</view>
+      <block wx:if="{{meal.status==='open'}}"
+        ><view class="section-title">我想吃的</view
+        ><view wx:if="{{!draft.length}}" class="empty"
+          >还没选菜，去菜单看看今天有什么。</view
+        ><view class="card compact row" wx:for="{{draft}}" wx:key="dish_id"
+          ><text>{{item.name}}</text><text>{{item.quantity}}份</text
+          ><button
+            class="link-button"
+            data-index="{{index}}"
+            bindtap="removeDraft"
+          >
+            移除
+          </button></view
+        ><view class="card"
+          ><view class="form-row"
+            ><text>我代表几个人选择</text
+            ><input
+              class="number-input"
+              type="number"
+              maxlength="2"
+              value="{{people}}"
+              bindinput="peopleInput" /></view
+          ><view class="label">给掌勺的人留句话</view
+          ><textarea
+            class="textarea"
+            maxlength="150"
+            value="{{note}}"
+            placeholder="忌口、过敏或想说的话，只给接单厨师看。"
+            bindinput="noteInput"
+          /><view class="muted"
+            >想吃的份数是你的请求，最终制作份数由厨师确认。</view
+          ></view
+        ><view wx:if="{{stale}}" class="note"
+          >别处已经修改过你的选择，直接提交会提示冲突。<button
+            class="link-button"
+            bindtap="restoreServer"
+          >
+            载入已提交版本
+          </button></view
+        ><button
+          class="primary"
+          loading="{{busy}}"
+          disabled="{{busy}}"
+          bindtap="submit"
+        >
+          {{draft.length?'确认我的选择':'提交空选择，撤回点菜'}}</button
+        ><button class="secondary" bindtap="back">继续选菜</button></block
+      >
+      <block wx:if="{{meal.role==='cook'}}"
+        ><view class="section-title"
+          >掌勺工作台<text class="muted">
+            · {{meal.participant_count}}人参与</text
+          ></view
+        >
+        <view wx:if="{{meal.requests.length}}" class="card"
+          ><view class="request" wx:for="{{meal.requests}}" wx:key="index"
+            ><view class="dish-name">{{item.name}}</view
+            ><view class="muted">{{item.items.length}}道菜</view
+            ><view wx:if="{{item.note}}">忌口 / 备注：{{item.note}}</view></view
+          ></view
+        ><view wx:else class="empty">大家还没提交选择。</view>
+        <view
+          class="card compact"
+          wx:for="{{meal.summary}}"
+          wx:key="dish_id"
+          wx:if="{{item.people>0}}"
+          ><view class="row"
+            ><text>{{item.name}}</text
+            ><text
+              >{{item.people}}人想吃 · 请求{{item.requested_quantity}}份</text
+            ></view
+          ></view
+        >
+        <block wx:if="{{meal.status==='open'}}"
+          ><view class="row"
+            ><button
+              class="primary flex"
+              data-action="meal.lock"
+              bindtap="action"
+              disabled="{{busy}}"
+            >
+              结束点菜，锁单</button
+            ><button
+              class="secondary flex"
+              bindtap="invitation"
+              disabled="{{busy}}"
+            >
+              生成邀请
+            </button></view
+          ><button class="link-button" bindtap="assign">
+            交给另一位厨师接单
+          </button></block
+        >
+        <view wx:if="{{inviteToken}}" class="card"
+          ><view>邀请口令已生成</view
+          ><view class="muted">持有口令的朋友可确认加入，截止后失效。</view
+          ><button wx:if="{{!local}}" class="primary" open-type="share">
+            邀请微信朋友</button
+          ><button class="secondary" bindtap="copyInvite">
+            {{local?'复制演练口令，切换角色后加入':'复制邀请口令'}}</button
+          ><button class="text-danger" bindtap="revokeInvite">
+            撤销这个邀请
+          </button></view
+        >
+        <block wx:if="{{meal.status==='locked'&&!meal.plan_confirmed}}"
+          ><view class="note"
+            >确认实际做多少份。填0表示明确不做，不能漏掉有人点的菜。</view
+          ><view class="card compact row" wx:for="{{plans}}" wx:key="dish_id"
+            ><view
+              >{{item.name}}<view class="muted"
+                >{{item.people}}人想吃</view
+              ></view
+            ><input
+              class="portion-input"
+              type="number"
+              maxlength="2"
+              value="{{item.quantity}}"
+              data-index="{{index}}"
+              bindinput="planInput" /></view
+          ><button
+            class="primary"
+            loading="{{busy}}"
+            disabled="{{busy||!plans.length}}"
+            bindtap="confirmPlan"
+          >
+            确认制作计划</button
+          ><button class="secondary" data-action="meal.unlock" bindtap="action">
+            重新开放点菜
+          </button></block
+        >
+        <button wx:if="{{meal.can_undo}}" class="secondary" bindtap="undo">
+          撤销最近一次制作状态</button
+        ><button
+          wx:if="{{meal.status==='locked'&&meal.plan_confirmed}}"
+          class="secondary"
+          data-action="meal.unlock"
+          bindtap="action"
+        >
+          重新开放并重做计划</button
+        ><view class="section-title">厨师内部参考金额</view
+        ><view class="card"
+          ><view class="quote-total">¥ {{total}}</view
+          ><view class="muted"
+            >{{meal.plan_confirmed?'按实际制作份数':'按成员请求份数汇总'}} ·
+            仅接单厨师可见 · 不收款</view
+          ><view wx:if="{{unpriced}}" class="muted"
+            >另有{{unpriced}}道菜未填写价格，未计入合计。</view
+          ></view
+        >
+        <view
+          wx:if="{{meal.status==='open'}}"
+          class="card compact"
+          wx:for="{{prices}}"
+          wx:key="dish_id"
+          ><view>{{item.name}}</view
+          ><view class="row"
+            ><input
+              class="input flex"
+              type="digit"
+              placeholder="可不填（元）"
+              maxlength="8"
+              value="{{item.value}}"
+              data-index="{{index}}"
+              bindinput="priceInput"
+            /><button
+              class="link-button"
+              data-index="{{index}}"
+              bindtap="priceSave"
+              disabled="{{busy}}"
+            >
+              保存本餐价
+            </button></view
+          ></view
+        >
+      </block>
+      <block wx:if="{{meal.plan_confirmed}}"
+        ><view class="section-title">这一顿的进度</view
+        ><view class="card" wx:for="{{meal.items}}" wx:key="dish_id"
+          ><view class="row"
+            ><view class="dish-name">{{item.name}}</view
+            ><text>{{item.quantity}}份</text></view
+          ><view wx:if="{{item.reason}}" class="muted"
+            >原因：{{item.reason}}</view
+          ><view class="status-line"
+            >{{item.status==='planned'?'等厨师开做':item.status==='cooking'?'正在制作':item.status==='served'?'已经上桌':'本次不做'}}</view
+          ><view wx:if="{{meal.role==='cook'}}" class="row"
+            ><button
+              wx:if="{{item.status==='planned'}}"
+              class="secondary flex"
+              data-id="{{item.dish_id}}"
+              data-status="cooking"
+              bindtap="transition"
+              disabled="{{busy}}"
+            >
+              开始做</button
+            ><button
+              wx:if="{{item.status==='cooking'}}"
+              class="primary flex"
+              data-id="{{item.dish_id}}"
+              data-status="served"
+              bindtap="transition"
+              disabled="{{busy}}"
+            >
+              已经上桌</button
+            ><button
+              wx:if="{{item.status==='planned'||item.status==='cooking'}}"
+              class="link-button"
+              data-id="{{item.dish_id}}"
+              data-status="skipped"
+              bindtap="transition"
+              disabled="{{busy}}"
+            >
+              不做了
+            </button></view
+          ></view
+        ></block
+      >
+      <view class="card"
+        ><button class="secondary" bindtap="subscribe">开饭时提醒我</button
+        ><view class="muted"
+          >{{notificationState||'可选提醒。即使拒绝，也能在这里查看进度。'}}</view
+        ></view
+      >
+      <block wx:if="{{meal.role==='cook'}}"
+        ><button
+          wx:if="{{!publicShareId}}"
+          class="secondary"
+          bindtap="publicShare"
+        >
+          生成可公开的菜单摘要</button
+        ><view wx:else class="card"
+          ><view>公开摘要已生成</view
+          ><view class="muted"
+            >{{local?'本地只演练公开字段过滤，不会发到朋友圈。':'可从右上角菜单分享到朋友圈。'}}</view
+          ><button class="secondary" bindtap="poster">制作菜单海报</button
+          ><button class="text-danger" bindtap="revokePublic">
+            撤销公开摘要
+          </button></view
+        ><button
+          wx:if="{{meal.status==='open'||meal.status==='locked'}}"
+          class="text-danger"
+          data-action="meal.cancel"
+          bindtap="action"
+        >
+          取消这一顿</button
+        ><button
+          wx:if="{{meal.status==='completed'||meal.status==='cancelled'||meal.status==='archived'}}"
+          class="secondary"
+          bindtap="copyMeal"
+        >
+          复制菜单，再约一顿</button
+        ><button
+          wx:if="{{meal.status==='completed'||meal.status==='cancelled'}}"
+          class="secondary"
+          data-action="meal.archive"
+          bindtap="action"
+        >
+          归档到历史记录
+        </button></block
+      >
+    </block></view
+  >
+</block>

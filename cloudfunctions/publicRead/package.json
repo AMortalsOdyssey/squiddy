@@ -1,0 +1,16 @@
+{
+  "name": "squiddy-publicread",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "4.0.2",
+    "lodash.set": "file:vendor/lodash.set",
+    "lodash.unset": "file:vendor/lodash.unset"
+  },
+  "overrides": {
+    "axios": "0.34.0",
+    "lodash.set": "$lodash.set",
+    "lodash.unset": "$lodash.unset"
+  }
+}

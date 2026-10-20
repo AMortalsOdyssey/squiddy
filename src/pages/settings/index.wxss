@@ -1,0 +1,13 @@
+.paragraph {
+  margin: 18rpx 0;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+.export {
+  max-height: 500rpx;
+  word-break: break-all;
+  font-size: 22rpx;
+}
+.section-title {
+  margin-top: 36rpx;
+}

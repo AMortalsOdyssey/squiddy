@@ -1,0 +1,12 @@
+.poster-canvas {
+  position: fixed;
+  left: -1000px;
+  top: 0;
+  width: 320px;
+  height: 500px;
+}
+.poster-image {
+  width: 100%;
+  border-radius: 24rpx;
+  margin: 24rpx 0;
+}

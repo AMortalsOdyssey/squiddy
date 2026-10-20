@@ -1,0 +1,137 @@
+<view class="page">
+  <view wx:if="{{local}}" class="local-banner"
+    >本地演练 · 数据仅存本机，未连接真实微信用户</view
+  >
+  <view class="eyebrow">鱿鱼须须 · 一起决定下一顿</view>
+  <view class="row"
+    ><view class="title">今天，想吃什么？</view
+    ><button wx:if="{{kitchen}}" class="link-button" bindtap="switchKitchen">
+      换个厨房
+    </button></view
+  >
+  <view wx:if="{{loading}}" class="empty">正在打开厨房…</view>
+  <view wx:elif="{{error}}" class="card"
+    ><view>{{error}}</view
+    ><button class="secondary" bindtap="refresh">重新加载</button></view
+  >
+  <view wx:elif="{{!kitchen}}" class="hero"
+    ><view class="hero-title">把拿手菜，做给在意的人。</view
+    ><view class="hero-copy">创建自己的厨房，或者从朋友发来的邀请加入。</view
+    ><button class="cream-button" bindtap="create">创建我的厨房</button></view
+  >
+  <block wx:else>
+    <view class="hero"
+      ><image
+        wx:if="{{coverUrl}}"
+        style="
+          width: 100%;
+          height: 240rpx;
+          border-radius: 16rpx;
+          margin-bottom: 18rpx;
+        "
+        src="{{coverUrl}}"
+        mode="aspectFill"
+      /><view class="row"
+        ><view class="hero-title">{{kitchen.name}}</view
+        ><button class="hero-link" bindtap="manage">管理</button></view
+      ><view class="hero-copy"
+        >{{kitchen.description || '一桌好饭，从这里开始。'}}</view
+      ></view
+    >
+    <view wx:if="{{meal}}" class="meal-strip" bindtap="switchMeal"
+      ><view
+        ><view class="dish-name">{{meal.title}}</view
+        ><view class="muted">{{when}} · {{status}}</view></view
+      ><text>切换 ›</text></view
+    >
+    <view wx:else class="card"
+      ><view>这间厨房还没有可参与的饭局。</view
+      ><button
+        wx:if="{{kitchen.role !== 'member'}}"
+        class="primary"
+        bindtap="publish"
+      >
+        发起一顿饭</button
+      ><view wx:else class="muted">请让掌勺的人发来饭局邀请。</view></view
+    >
+    <view class="search-wrap"
+      ><input
+        class="search"
+        placeholder="找菜名或食材"
+        value="{{search}}"
+        bindinput="searchInput"
+    /></view>
+    <scroll-view scroll-x class="categories"
+      ><view
+        class="category {{category===item.id?'selected':''}}"
+        wx:for="{{categories}}"
+        wx:key="id"
+        data-id="{{item.id}}"
+        bindtap="category"
+        >{{item.name}}</view
+      ></scroll-view
+    >
+    <button
+      wx:if="{{meal && meal.status==='open'}}"
+      class="recommend-button"
+      bindtap="recommend"
+    >
+      <text>帮我搭一桌</text><text class="muted">按人数和忌口挑选 ›</text>
+    </button>
+    <view wx:if="{{!visible.length}}" class="empty"
+      >{{dishes.length?'没有找到这道菜，换个词试试。':'先添加几道拿手菜吧。'}}</view
+    >
+    <view class="dish-card" wx:for="{{visible}}" wx:key="id">
+      <image
+        wx:if="{{item.image_url}}"
+        class="dish-image"
+        src="{{item.image_url}}"
+        mode="aspectFill"
+        data-id="{{item.id}}"
+        bindtap="detail"
+      />
+      <view
+        wx:else
+        class="dish-placeholder"
+        data-id="{{item.id}}"
+        bindtap="detail"
+        ><text>{{item.category_name}}</text></view
+      >
+      <view class="dish-content"
+        ><view bindtap="detail" data-id="{{item.id}}"
+          ><view class="dish-name">{{item.name}}</view
+          ><view class="muted"
+            >{{item.minutes}}分钟 ·
+            {{item.spicy?'有辣味':'不辣'}}{{item.vegetarian?' · 素食':''}}</view
+          ></view
+        >
+        <view wx:if="{{meal && meal.status==='open'}}" class="step"
+          ><button
+            aria-label="减少{{item.name}}份数"
+            data-id="{{item.id}}"
+            data-delta="-1"
+            bindtap="change"
+            disabled="{{item.quantity===0}}"
+          >
+            −</button
+          ><text>{{item.quantity}}</text
+          ><button
+            aria-label="增加{{item.name}}份数"
+            data-id="{{item.id}}"
+            data-delta="1"
+            bindtap="change"
+            disabled="{{item.quantity===20}}"
+          >
+            ＋
+          </button></view
+        >
+        <view wx:else class="muted" bindtap="detail" data-id="{{item.id}}"
+          >看看做法 ›</view
+        ></view
+      >
+    </view>
+    <button wx:if="{{meal}}" class="primary sticky-action" bindtap="review">
+      {{count?'看看我的选择 · '+count+'道菜':'查看这一顿的进度'}}
+    </button>
+  </block>
+</view>

@@ -1,0 +1,139 @@
+<view class="page"
+  ><view wx:if="{{local}}" class="local-banner">本地演练 · 未连接真实用户</view>
+  <block wx:if="{{creating}}"
+    ><view class="eyebrow">给一桌好饭起个名字</view
+    ><view class="title">我的小厨房</view
+    ><view class="card"
+      ><view class="label">厨房名称</view
+      ><input
+        class="input"
+        maxlength="32"
+        placeholder="例如：周末的小厨房"
+        value="{{name}}"
+        data-field="name"
+        bindinput="input"
+      /><view class="label">想对朋友说</view
+      ><textarea
+        class="textarea"
+        maxlength="160"
+        placeholder="来吃饭，顺便聊聊最近的生活。"
+        value="{{description}}"
+        data-field="description"
+        bindinput="input"
+      /></view
+    ><button
+      class="primary"
+      loading="{{busy}}"
+      disabled="{{busy || !name}}"
+      bindtap="create"
+    >
+      创建厨房
+    </button></block
+  >
+  <view wx:elif="{{loading}}" class="empty">正在打开厨房…</view
+  ><view wx:elif="{{error}}" class="card"
+    >{{error}}<button bindtap="refresh" class="secondary">重试</button></view
+  >
+  <block wx:elif="{{kitchen}}"
+    ><view class="eyebrow"
+      >{{kitchen.role==='owner'?'我的厨房':kitchen.role==='cook'?'厨房厨师':'朋友的厨房'}}</view
+    ><view class="title">{{kitchen.name}}</view>
+    <button
+      wx:if="{{kitchen.role==='owner'}}"
+      class="link-button"
+      bindtap="editKitchen"
+    >
+      编辑厨房资料与封面</button
+    ><view wx:if="{{editing}}" class="card"
+      ><input
+        class="input"
+        value="{{name}}"
+        data-field="name"
+        bindinput="input"
+        maxlength="32"
+      /><textarea
+        class="textarea"
+        value="{{description}}"
+        data-field="description"
+        bindinput="input"
+        maxlength="160"
+      /><image
+        wx:if="{{imageUrl}}"
+        style="width: 100%; height: 260rpx"
+        src="{{imageUrl}}"
+        mode="aspectFill"
+      /><button class="secondary" bindtap="cover" disabled="{{busy}}">
+        选择厨房封面</button
+      ><view wx:if="{{imageId}}"
+        >{{imageStatus==='approved'?'封面已就绪':'封面等待审核'}}<button
+          class="link-button"
+          bindtap="checkCover"
+        >
+          查看审核结果</button
+        ><button class="link-button" bindtap="clearCover">
+          移除封面
+        </button></view
+      ><button class="primary" bindtap="saveKitchen" disabled="{{busy}}">
+        保存厨房资料
+      </button></view
+    ><view wx:if="{{kitchen.role!=='member'}}" class="row"
+      ><button class="primary flex" bindtap="add">添加拿手菜</button
+      ><button class="secondary flex" bindtap="publish">
+        发起一顿饭
+      </button></view
+    >
+    <view class="section-title">拿手菜 · {{dishes.length}}</view
+    ><view
+      class="card compact"
+      wx:for="{{dishes}}"
+      wx:key="id"
+      data-id="{{item.id}}"
+      bindtap="{{kitchen.role!=='member'?'edit':''}}"
+      ><view class="row"
+        ><view
+          ><view class="dish-name">{{item.name}}</view
+          ><view class="muted"
+            >{{item.category_name}} · {{item.active?'可点':'已下架'}}</view
+          ></view
+        ><view wx:if="{{kitchen.can_price}}" class="internal"
+          >内部参考价<view>{{item.price}}</view></view
+        ></view
+      ></view
+    >
+    <view class="section-title">每一顿的记录</view
+    ><view wx:if="{{!meals.length}}" class="empty">第一顿饭，等你来安排。</view
+    ><view
+      class="card compact"
+      wx:for="{{meals}}"
+      wx:key="id"
+      data-id="{{item.id}}"
+      bindtap="open"
+      ><view class="row"
+        ><text>{{item.title}}</text
+        ><text class="tag">{{item.label}}</text></view
+      ></view
+    >
+    <block wx:if="{{kitchen.role==='owner'}}"
+      ><view class="section-title">一起吃饭的人</view
+      ><view class="card compact" wx:for="{{kitchen.members}}" wx:key="id"
+        ><view class="row"
+          ><view
+            >{{item.name}}<view class="muted"
+              >{{item.role==='owner'?'主人':item.role==='cook'?'厨房厨师':'朋友'}}</view
+            ></view
+          ><button
+            wx:if="{{item.role!=='owner'}}"
+            class="link-button"
+            data-id="{{item.id}}"
+            bindtap="member"
+          >
+            管理
+          </button></view
+        ></view
+      ></block
+    >
+    <button class="text-danger" bindtap="leave">
+      {{kitchen.role==='owner'?'关闭这个厨房':'离开这个厨房'}}
+    </button></block
+  >
+</view>

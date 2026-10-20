@@ -1,0 +1,70 @@
+<view class="page"
+  ><view wx:if="{{local}}" class="local-banner"
+    >本地演练 · 不会向真实朋友发出邀请</view
+  ><view class="eyebrow">安排一顿，让大家期待的饭</view
+  ><view class="title">今天我掌勺</view
+  ><view wx:if="{{error}}" class="note">{{error}}</view
+  ><block wx:elif="{{!loading}}"
+    ><view class="card"
+      ><view class="form-row"
+        ><text>预计用餐人数</text
+        ><input
+          class="number-input"
+          type="number"
+          maxlength="2"
+          value="{{estimatedPeople}}"
+          data-field="estimatedPeople"
+          bindinput="input" /></view
+      ><view class="label">这一顿的名字</view
+      ><input
+        class="input"
+        maxlength="40"
+        value="{{title}}"
+        data-field="title"
+        bindinput="input" /><view class="form-row"
+        ><text>用餐日期（北京时间）</text
+        ><picker mode="date" value="{{date}}" bindchange="date"
+          >{{date}} ›</picker
+        ></view
+      ><view class="form-row"
+        ><text>用餐时间</text
+        ><picker mode="time" value="{{time}}" bindchange="time"
+          >{{time}} ›</picker
+        ></view
+      ><view class="form-row"
+        ><text>提前几分钟截止点菜</text
+        ><input
+          class="number-input"
+          type="number"
+          maxlength="4"
+          value="{{cutoffMinutes}}"
+          data-field="cutoffMinutes"
+          bindinput="input" /></view
+    ></view>
+    <view class="section-title">这次可以点什么 · {{selected.length}}道</view
+    ><checkbox-group bindchange="select"
+      ><label class="card compact row" wx:for="{{dishes}}" wx:key="id"
+        ><view
+          ><view>{{item.name}}</view
+          ><view class="muted"
+            >{{item.category_name}} · {{item.minutes}}分钟</view
+          ></view
+        ><checkbox
+          value="{{item.id}}"
+          checked="{{item.selected}}"
+          color="#244B3B" /></label
+    ></checkbox-group>
+    <view wx:if="{{!dishes.length}}" class="empty"
+      >先回厨房添加几道拿手菜。</view
+    ><view class="muted"
+      >你将成为本餐接单厨师。朋友提交的是想吃需求，最终制作份数由你确认。</view
+    ><button
+      class="primary"
+      loading="{{busy}}"
+      disabled="{{busy||!selected.length}}"
+      bindtap="publish"
+    >
+      发布本次菜单
+    </button></block
+  ></view
+>

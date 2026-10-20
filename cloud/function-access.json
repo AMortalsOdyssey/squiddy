@@ -1,0 +1,15 @@
+{
+  "status": "must-apply-and-verify-in-console",
+  "api": {
+    "invoke": "auth != null"
+  },
+  "publicRead": {
+    "invoke": true
+  },
+  "platformCallback": {
+    "invoke": false
+  },
+  "maintenance": {
+    "invoke": false
+  }
+}

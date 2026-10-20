@@ -1,0 +1,46 @@
+<view class="page"
+  ><view wx:if="{{local}}" class="local-banner"
+    >本地演练 · 注销只影响当前演练角色</view
+  ><view class="title">隐私与数据</view
+  ><view class="card"
+    ><view class="section-title">你的数据如何使用</view
+    ><view class="paragraph">{{privacy}}</view
+    ><view wx:if="{{local}}" class="note"
+      >当前数据仅存于本机。图片审核和消息授权为模拟；未连接真实云服务。</view
+    ></view
+  ><button class="secondary" bindtap="exportData" disabled="{{busy}}">
+    导出我的数据 / 备份</button
+  ><view wx:if="{{exportText}}" class="card"
+    ><scroll-view scroll-y class="export"
+      ><text selectable>{{exportText}}</text></scroll-view
+    ><button class="secondary" bindtap="copy">复制导出内容</button></view
+  ><view class="card"
+    ><view class="section-title">反馈与建议</view
+    ><textarea
+      class="textarea"
+      value="{{feedback}}"
+      bindinput="feedbackInput"
+      maxlength="500"
+      placeholder="告诉我们哪里还可以更好；请勿填写密码或联系方式。"
+    /><button
+      class="secondary"
+      disabled="{{busy||!feedback}}"
+      bindtap="sendFeedback"
+    >
+      提交反馈</button
+    ><view wx:if="{{feedbackId}}" class="muted"
+      >已记录反馈：{{feedbackId}}</view
+    ></view
+  ><view class="section-title">账号注销</view
+  ><view
+    wx:if="{{deletionStatus==='pending'||deletionStatus==='running'}}"
+    class="note"
+    >账号已停用，个人记录正在删除。<button class="secondary" bindtap="status">
+      刷新进度
+    </button></view
+  ><view wx:elif="{{deletionStatus==='completed'}}" class="note"
+    >个人记录清理已完成。</view
+  ><button wx:else class="text-danger" bindtap="remove" disabled="{{busy}}">
+    注销账号并删除个人记录
+  </button></view
+>

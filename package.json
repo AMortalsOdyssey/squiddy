@@ -1,0 +1,22 @@
+{
+  "name": "squiddy",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test tests/*.test.cjs",
+    "doctor": "node scripts/doctor.mjs",
+    "check": "npm run typecheck && npm test && npm run doctor",
+    "setup:cloud": "node scripts/install-cloud.mjs",
+    "audit:all": "node scripts/audit.mjs"
+  },
+  "devDependencies": {
+    "miniprogram-api-typings": "5.2.3",
+    "prettier": "3.9.10",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

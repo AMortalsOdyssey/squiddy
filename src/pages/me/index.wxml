@@ -1,0 +1,44 @@
+<view class="page"
+  ><view wx:if="{{local}}" class="local-banner"
+    >本地演练 · 三个角色共用本机测试数据</view
+  ><view class="eyebrow">不赶时间，好好吃饭。</view
+  ><view class="title">我的小厨房</view
+  ><view class="hero"
+    ><view class="hero-title">鱿鱼须须</view
+    ><view>把拿手菜，变成大家的小期待。</view></view
+  ><view wx:if="{{error}}" class="note">{{error}}</view
+  ><view class="card"
+    ><view class="label">厨房里的昵称</view
+    ><input
+      class="input"
+      value="{{name}}"
+      maxlength="24"
+      bindinput="input"
+    /><button class="secondary" bindtap="save" disabled="{{busy}}">
+      保存昵称
+    </button></view
+  ><view
+    class="card row"
+    wx:for="{{kitchens}}"
+    wx:key="id"
+    data-id="{{item.id}}"
+    bindtap="open"
+    ><text>{{item.name}}</text
+    ><text class="muted"
+      >{{item.role==='owner'?'主人':item.role==='cook'?'厨师':'朋友'}} ›</text
+    ></view
+  ><button class="primary" bindtap="create">创建厨房</button
+  ><button class="secondary" bindtap="invite">输入邀请口令</button
+  ><button class="secondary" bindtap="settings">隐私、数据导出与注销</button
+  ><view wx:if="{{local}}" class="card"
+    ><view class="dish-name">本地测试工具</view
+    ><view class="muted"
+      >当前角色：{{actor}}。切换后请使用邀请口令加入饭局。</view
+    ><button class="secondary" bindtap="switchActor">切换演练角色</button
+    ><view class="row"
+      ><text>模拟断网</text
+      ><switch
+        checked="{{offline}}"
+        bindchange="offline"
+        color="#244B3B" /></view></view
+></view>

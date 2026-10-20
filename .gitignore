@@ -1,0 +1,13 @@
+node_modules/
+miniprogram/
+project.private.config.json
+config/local.json
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+artifacts/
+project.config.json
+cloudfunctions/*/domain/
+cloudfunctions/*/shared/

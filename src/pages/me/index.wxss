@@ -1,0 +1,8 @@
+.hero {
+  margin: 20rpx 0;
+}
+.hero-title {
+  font-size: 44rpx;
+  font-weight: 600;
+  margin-bottom: 14rpx;
+}

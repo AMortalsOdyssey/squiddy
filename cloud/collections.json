@@ -1,0 +1,132 @@
+{
+  "status": "not-deployed",
+  "clientRules": "database.rules.json",
+  "collections": [
+    {
+      "name": "audit_events",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "cleanup_jobs",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "deletion_jobs",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "dish_prices",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "dishes",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "feedback",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "file_deletions",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "invitations",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "invite_refs",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "kitchens",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "maintenance_state",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "meal_memberships",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "meal_prices",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "meals",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "media",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "media_callbacks",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "media_traces",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "memberships",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "notification_jobs",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "notification_preferences",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "public_shares",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "receipts",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "selections",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "transition_audits",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    },
+    {
+      "name": "users",
+      "key": "_id",
+      "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
+    }
+  ],
+  "note": "CloudBase document keys intentionally use server IDs, not MongoDB ObjectId. Every collection denies direct client reads/writes. Create all collections before invoking functions."
+}

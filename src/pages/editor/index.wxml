@@ -1,0 +1,147 @@
+<view class="page"
+  ><view wx:if="{{local}}" class="local-banner"
+    >本地演练 · 图片审核结果为模拟结果</view
+  ><view class="eyebrow">把拿手的味道记下来</view
+  ><view class="title">{{dishId?'编辑菜谱':'一道拿手菜'}}</view
+  ><view wx:if="{{error}}" class="note">{{error}}</view
+  ><block wx:elif="{{!loading}}">
+    <view class="photo-picker" bindtap="photo"
+      ><image wx:if="{{imageUrl}}" src="{{imageUrl}}" mode="aspectFill" /><view
+        wx:else
+        >＋ 拍一张菜的照片<view class="muted"
+          >可不上传 · 请使用自己拍摄或有授权的图片</view
+        ></view
+      ></view
+    >
+    <view wx:if="{{imageId}}" class="row"
+      ><text class="muted"
+        >{{imageStatus==='approved'?'图片已就绪':imageStatus==='pending'?'等待安全审核':'图片尚未就绪'}}</text
+      ><button
+        wx:if="{{imageStatus==='pending'}}"
+        class="link-button"
+        bindtap="checkImage"
+      >
+        查看审核结果</button
+      ><button class="link-button" bindtap="removeImage">移除图片</button></view
+    >
+    <view class="card"
+      ><view class="label">菜名</view
+      ><input
+        class="input"
+        maxlength="40"
+        placeholder="例如：妈妈的番茄炒蛋"
+        value="{{name}}"
+        data-field="name"
+        bindinput="input"
+      />
+      <view class="form-row"
+        ><text>分类</text
+        ><picker
+          range="{{categories}}"
+          value="{{categoryIndex}}"
+          bindchange="category"
+          ><view>{{categories[categoryIndex]}} ›</view></picker
+        ></view
+      >
+      <view class="form-row"
+        ><text>大约需要几分钟</text
+        ><input
+          class="number-input"
+          type="number"
+          maxlength="3"
+          value="{{minutes}}"
+          data-field="minutes"
+          bindinput="input"
+      /></view>
+      <view class="form-row"
+        ><text>一份大约供几人分享</text
+        ><input
+          class="number-input"
+          type="number"
+          value="{{defaultServes}}"
+          data-field="defaultServes"
+          bindinput="input" /></view
+      ><view class="label">食材</view
+      ><textarea
+        class="textarea"
+        maxlength="600"
+        placeholder="番茄、鸡蛋、葱；请写全调味料中的过敏原"
+        value="{{ingredients}}"
+        data-field="ingredients"
+        bindinput="input"
+      />
+      <view class="form-row"
+        ><text>食材及调味料已列完整</text
+        ><switch
+          checked="{{ingredientComplete}}"
+          data-field="ingredientComplete"
+          bindchange="toggle"
+          color="#244B3B" /></view
+      ><view class="label">过敏原提示</view
+      ><input
+        class="input"
+        maxlength="200"
+        placeholder="例如：鸡蛋、大豆、花生"
+        value="{{allergens}}"
+        data-field="allergens"
+        bindinput="input"
+      />
+      <view class="form-row"
+        ><text>适合素食</text
+        ><switch
+          checked="{{vegetarian}}"
+          data-field="vegetarian"
+          bindchange="toggle"
+          color="#244B3B" /></view
+      ><view class="form-row"
+        ><text>有辣味</text
+        ><switch
+          checked="{{spicy}}"
+          data-field="spicy"
+          bindchange="toggle"
+          color="#244B3B"
+      /></view>
+      <view class="label">做法</view
+      ><textarea
+        class="textarea tall"
+        maxlength="1200"
+        placeholder="把你的小诀窍也记下来吧。"
+        value="{{steps}}"
+        data-field="steps"
+        bindinput="input"
+      />
+    </view>
+    <view wx:if="{{canPrice}}" class="card"
+      ><view class="label">厨师内部参考价（元）</view
+      ><input
+        class="input"
+        type="digit"
+        maxlength="8"
+        placeholder="可不填，朋友看不到"
+        value="{{price}}"
+        data-field="price"
+        bindinput="input"
+      /><view class="muted"
+        >仅作内部参考，不收款；修改不影响已发布饭局的价格。</view
+      ></view
+    >
+    <view class="card"
+      ><view class="form-row"
+        ><text>允许新饭局选用</text
+        ><switch
+          checked="{{active}}"
+          data-field="active"
+          bindchange="toggle"
+          color="#244B3B" /></view
+      ><view class="muted">关闭后保留历史饭局中的菜谱。</view></view
+    >
+    <button
+      class="primary"
+      loading="{{busy}}"
+      disabled="{{busy||!name}}"
+      bindtap="save"
+    >
+      保存这道菜
+    </button></block
+  >
+</view>

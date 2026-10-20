@@ -1,0 +1,9 @@
+{
+  "desc": "前置开发版不索引",
+  "rules": [
+    {
+      "action": "disallow",
+      "page": "*"
+    }
+  ]
+}

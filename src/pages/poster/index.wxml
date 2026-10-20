@@ -1,0 +1,19 @@
+<view class="page"
+  ><view class="title">一张菜单，约一桌饭</view
+  ><view wx:if="{{local}}" class="local-banner"
+    >本地海报不含小程序码，不能扫码加入。</view
+  ><view wx:if="{{error}}" class="note"
+    >{{error}}<button class="secondary" bindtap="render">重试生成</button></view
+  ><view wx:if="{{loading}}" class="empty">正在排好这一桌…</view
+  ><canvas type="2d" id="poster" class="poster-canvas" /><image
+    wx:if="{{imagePath}}"
+    class="poster-image"
+    src="{{imagePath}}"
+    mode="widthFix"
+    bindtap="preview"
+  /><button wx:if="{{imagePath}}" class="primary" bindtap="save">
+    保存海报到相册</button
+  ><view class="muted"
+    >仅包含你已确认公开的标题和菜名。保存或转发的图片不能远程收回，扫码内容仍受分享有效期和撤销控制。</view
+  ></view
+>
