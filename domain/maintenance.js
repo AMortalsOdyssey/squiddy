@@ -120,10 +120,15 @@ async function cleanupBatch(
         if (table === "media" && r.file_id) {
           job.file_ids ||= [];
           if (!job.file_ids.includes(rowId)) job.file_ids.push(rowId);
+          const reservation = await tx.get("file_deletions", rowId);
           await tx.put("file_deletions", rowId, {
+            ...(reservation?.status === "upload_reserved" ? reservation : {}),
             id: rowId,
             file_id: r.file_id,
-            status: "pending",
+            status:
+              reservation?.status === "upload_reserved"
+                ? "upload_reserved"
+                : "pending",
             job_id: jobId,
           });
         }

@@ -37,6 +37,9 @@ function runtime(extra = {}) {
       cloud,
       store,
       maintenanceClock: extra.maintenanceClock,
+      uploadMetadata: async () => ({
+        data: { fileId: "cloud://test/private.jpg" },
+      }),
       env: {
         SQUIDDY_APP_ID: APP,
         SQUIDDY_INVITE_KEY: "test-key-only-32-characters-long-xxxx",
@@ -594,4 +597,183 @@ test("平台接入检查只读且限制厨房主人，过滤模板检查的无�
   assert.equal(data.templates.data[0].priTmplId, "template-test");
   assert.ok(!JSON.stringify(data).includes("never-return"));
   assert.equal(data.categories.data[0].name, "工具");
+});
+test("上传成功后丢失回执，预登记文件仍可清理；活动上传不会被提前删除", async () => {
+  const r = runtime({
+    env: {
+      SQUIDDY_MEDIA_ENABLED: "true",
+      SQUIDDY_CALLBACK_SOURCE: "wx_callback",
+    },
+  });
+  const sharp = require("../cloudfunctions/api/node_modules/sharp");
+  const bytes = await sharp({
+    create: { width: 4, height: 4, channels: 3, background: "white" },
+  })
+    .png()
+    .toBuffer();
+  const k = await r.api(
+    {
+      action: "kitchen.create",
+      payload: { name: "恢复测试", request_id: "recovery-k" },
+    },
+    ctx,
+  );
+  const ticket = await r.api(
+    {
+      action: "media.prepare",
+      payload: { kitchen_id: k.id, request_id: "recovery-media" },
+    },
+    ctx,
+  );
+  let written = false,
+    deleted = 0;
+  r.cloud.uploadFile = async () => {
+    written = true;
+    assert.equal(
+      r.store.snapshot().file_deletions[ticket.id].status,
+      "upload_reserved",
+    );
+    throw Error("upload acknowledgement lost");
+  };
+  await assert.rejects(
+    r.api(
+      {
+        action: "media.complete",
+        payload: {
+          media_id: ticket.id,
+          request_id: "recovery-upload",
+          base64: bytes.toString("base64"),
+        },
+      },
+      ctx,
+    ),
+  );
+  assert.equal(written, true);
+  r.cloud.deleteFile = async () => {
+    deleted++;
+    return { fileList: [{ status: 0 }] };
+  };
+  await r.maintenance({}, { SOURCE: "wx_trigger" });
+  assert.equal(deleted, 0);
+  await r.store.transaction(async (tx) => {
+    await tx.remove("media", ticket.id); // interrupted cleanup after an upload
+    const reservation = await tx.get("file_deletions", ticket.id);
+    reservation.not_before = 1;
+    await tx.put("file_deletions", ticket.id, reservation);
+  });
+  await r.maintenance({}, { SOURCE: "wx_trigger" });
+  assert.equal(deleted, 1);
+  assert.equal(r.store.snapshot().file_deletions[ticket.id], undefined);
+});
+test("文件删除空回执和失败保留队列，重试成功才移除；已有媒体接管预登记文件", async () => {
+  const r = runtime();
+  await r.store.transaction(async (tx) => {
+    await tx.put("file_deletions", "retry", {
+      file_id: "cloud://test/retry",
+      status: "pending",
+    });
+    await tx.put("file_deletions", "owned", {
+      file_id: "cloud://test/owned",
+      status: "upload_reserved",
+      not_before: 1,
+    });
+    await tx.put("media", "owned", {
+      file_id: "cloud://test/owned",
+      status: "approved",
+    });
+  });
+  for (const response of [{ fileList: [] }, { fileList: [{ status: -1 }] }]) {
+    r.cloud.deleteFile = async () => response;
+    await r.maintenance({}, { SOURCE: "wx_trigger" });
+    assert.ok(r.store.snapshot().file_deletions.retry);
+  }
+  assert.equal(r.store.snapshot().file_deletions.owned, undefined);
+  assert.ok(r.store.snapshot().media.owned);
+  r.cloud.deleteFile = async () => ({ fileList: [{ status: 0 }] });
+  await r.maintenance({}, { SOURCE: "wx_trigger" });
+  assert.equal(r.store.snapshot().file_deletions.retry, undefined);
+});
+test("文件已不存在视为幂等删除成功，未知失败仍保留可追踪错误", async () => {
+  const r = runtime();
+  await r.store.transaction((tx) =>
+    tx.put("file_deletions", "already-gone", {
+      file_id: "cloud://test/already-gone",
+      status: "pending",
+    }),
+  );
+  r.cloud.deleteFile = async () => ({ fileList: [{ status: -503003 }] });
+  await r.maintenance({}, { SOURCE: "wx_trigger" });
+  assert.equal(r.store.snapshot().file_deletions["already-gone"], undefined);
+  await r.store.transaction((tx) =>
+    tx.put("file_deletions", "denied", {
+      file_id: "cloud://test/denied",
+      status: "pending",
+    }),
+  );
+  r.cloud.deleteFile = async () => ({ fileList: [{ status: -503002 }] });
+  await r.maintenance({}, { SOURCE: "wx_trigger" });
+  const pending = r.store.snapshot().file_deletions.denied;
+  assert.equal(pending.status, "pending");
+  assert.equal(pending.failures, 1);
+  assert.equal(pending.last_error_code, "DELETE_-503002");
+  assert.ok(pending.last_failed_at > 0);
+});
+test("图片检查余量不足时先保存游标，下轮从图片队列开始而不是永远跳过", async () => {
+  let clock = 0;
+  const memory = createMemoryStore({
+    media: {
+      expired: {
+        id: "expired",
+        status: "failed",
+        expires_at: 1,
+        kitchen_id: "missing",
+      },
+    },
+  });
+  const store = {
+    transaction(fn) {
+      return memory.transaction((tx) =>
+        fn({
+          ...tx,
+          async scan(...args) {
+            clock += 250;
+            return tx.scan(...args);
+          },
+        }),
+      );
+    },
+  };
+  const r = runtime({ store, maintenanceClock: () => clock });
+  await r.maintenance({}, { SOURCE: "wx_trigger" });
+  assert.ok(memory.snapshot().media.expired);
+  assert.equal(memory.snapshot().maintenance_state.cursors.next_batch, 4);
+  await r.maintenance({}, { SOURCE: "wx_trigger" });
+  assert.equal(memory.snapshot().media.expired, undefined);
+});
+test("损坏的文件清理任务拒绝请求平台，保留脱敏错误且不拖住其他任务", async () => {
+  const r = runtime();
+  let providerCalls = 0;
+  r.cloud.deleteFile = async () => {
+    providerCalls++;
+    return { fileList: [{ status: 0 }] };
+  };
+  await r.store.transaction(async (tx) => {
+    await tx.put("file_deletions", "invalid", {
+      file_id: "bad-provider-reference",
+      status: "pending",
+    });
+    await tx.put("file_deletions", "valid", {
+      file_id: "cloud://test/file",
+      status: "pending",
+    });
+  });
+  await r.maintenance({}, { SOURCE: "wx_trigger" });
+  assert.equal(providerCalls, 1);
+  const state = r.store.snapshot();
+  assert.equal(state.file_deletions.invalid.last_error_code, "INVALID_FILE_ID");
+  assert.equal(state.file_deletions.invalid.failures, 1);
+  assert.equal(state.file_deletions.valid, undefined);
+  const logs = Object.values(state.audit_events);
+  assert.equal(logs[0].type, "maintenance_item_failure");
+  assert.ok(!JSON.stringify(logs).includes("bad-provider-reference"));
 });

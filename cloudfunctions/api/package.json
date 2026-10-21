@@ -4,10 +4,11 @@
   "private": true,
   "main": "index.js",
   "dependencies": {
-    "wx-server-sdk": "4.0.2",
+    "@cloudbase/node-sdk": "3.17.2",
     "lodash.set": "file:vendor/squiddy-safe-set-1.0.0.tgz",
     "lodash.unset": "file:vendor/squiddy-safe-unset-1.0.0.tgz",
-    "sharp": "0.35.5"
+    "sharp": "0.35.5",
+    "wx-server-sdk": "4.0.2"
   },
   "overrides": {
     "axios": "0.34.0",

@@ -28,6 +28,7 @@ function makeRuntime({
   env = process.env,
   store = cloudStore(cloud.database()),
   imageProcessor,
+  uploadMetadata,
   maintenanceClock = Date.now,
 }) {
   const appid = env.SQUIDDY_APP_ID || "";
@@ -123,8 +124,41 @@ function makeRuntime({
             .jpeg({ quality: 65 })
             .toBuffer({ resolveWithObject: true }));
         input(data.length <= 512 * 1024, "图片内容过大，请裁剪后再上传");
+        const cloudPath = "private-images/" + image.id + ".jpg";
+        // Reserve the provider's real file ID before the external write. A process
+        // exit after upload can then be recovered without listing private storage.
+        const uploadMeta = uploadMetadata
+          ? await uploadMetadata(cloudPath)
+          : await (() => {
+              const sdk = require("@cloudbase/node-sdk");
+              return sdk
+                .init({ env: sdk.SYMBOL_CURRENT_ENV })
+                .getUploadMetadata({ cloudPath });
+            })();
+        const reservedId = uploadMeta.data?.fileId;
+        ensure(
+          typeof reservedId === "string" && reservedId.startsWith("cloud://"),
+          "UNAVAILABLE",
+          "无法登记图片上传任务",
+        );
+        await store.transaction(async (tx) => {
+          const current = await tx.get("media", image.id);
+          ensure(
+            current?.status === "uploading" && current.expires_at > Date.now(),
+            "INVALID_IMAGE",
+            "图片上传任务已失效",
+          );
+          current.file_id = reservedId;
+          await tx.put("media", image.id, current);
+          await tx.put("file_deletions", image.id, {
+            id: image.id,
+            file_id: reservedId,
+            status: "upload_reserved",
+            not_before: current.expires_at,
+          });
+        });
         const uploaded = await cloud.uploadFile({
-          cloudPath: "private-images/" + image.id + ".jpg",
+          cloudPath,
           fileContent: data,
         });
         // Persist the cleanup reference before calling the asynchronous moderation API.
@@ -133,6 +167,9 @@ function makeRuntime({
           if (current) {
             current.file_id = uploaded.fileID;
             await tx.put("media", image.id, current);
+            // Keep an unexpected provider result recoverable as well.
+            if (uploaded.fileID === reservedId)
+              await tx.remove("file_deletions", image.id);
           } else
             await tx.put("file_deletions", image.id, {
               id: image.id,
@@ -368,9 +405,56 @@ function makeRuntime({
         await store.transaction((tx) => tx.remove("media_callbacks", id));
     });
     await batch("file_deletions", async (id, data) => {
-      const result = await cloud.deleteFile({ fileList: [data.file_id] });
-      if (result.fileList?.every((f) => f.status === 0))
-        await store.transaction((tx) => tx.remove("file_deletions", id));
+      if (data.status === "upload_reserved") {
+        if (!data.not_before || data.not_before > Date.now()) return;
+        const owned = await store.transaction(async (tx) => {
+          const image = await tx.get("media", id);
+          if (image?.file_id === data.file_id) {
+            await tx.remove("file_deletions", id);
+            return true;
+          }
+          return false;
+        });
+        if (owned) return;
+      }
+      try {
+        ensure(
+          typeof data.file_id === "string" &&
+            data.file_id.length <= 512 &&
+            /^cloud:\/\/[^/]+\/[^\u0000]+$/.test(data.file_id),
+          "INVALID_FILE_ID",
+          "清理任务的文件标识无效",
+        );
+        const result = await cloud.deleteFile({ fileList: [data.file_id] });
+        // The SDK defines -503003 as STORAGE_FILE_NONEXIST. Deletion can
+        // already have succeeded before an acknowledgement or cursor was lost.
+        if (
+          result.fileList?.length !== 1 ||
+          ![0, -503003].includes(result.fileList[0].status)
+        )
+          throw {
+            code: "DELETE_" + (result.fileList?.[0]?.status ?? "NO_RECEIPT"),
+          };
+        await store.transaction(async (tx) => {
+          const current = await tx.get("file_deletions", id);
+          if (current?.file_id === data.file_id)
+            await tx.remove("file_deletions", id);
+        });
+      } catch (error) {
+        await store.transaction(async (tx) => {
+          const current = await tx.get("file_deletions", id);
+          if (current?.file_id !== data.file_id) return;
+          current.failures = Math.min((current.failures || 0) + 1, 1000000);
+          current.last_failed_at = Date.now();
+          current.last_error_code = String(
+            error?.errCode || error?.code || "UNAVAILABLE",
+          )
+            .replace(/[^a-zA-Z0-9_-]/g, "")
+            .slice(0, 64);
+          await tx.put("file_deletions", id, current);
+        });
+        throw error;
+      }
     });
     await batch("notification_jobs", async (id, data) => {
       if (
@@ -474,19 +558,45 @@ function makeRuntime({
         tx.scan(table, limit, cursor[table] || ""),
       );
       let visited = 0;
+      let deferred = false;
       for (const { id, data } of rows) {
-        if (maintenanceClock() >= deadline) break;
+        // A media reference check has several transactional reads/writes. Do not
+        // start it at the tail of a 3s invocation and repeatedly lose its commit.
+        const reserve =
+          table === "media" ? 1400 : table === "file_deletions" ? 900 : 0;
+        if (maintenanceClock() + reserve >= deadline) {
+          deferred = true;
+          break;
+        }
         try {
           await work(id, data);
           processed++;
         } catch (e) {
           console.warn("maintenance.item_failed", { table, code: safeCode(e) });
+          await store.transaction((tx) =>
+            tx.put(
+              "audit_events",
+              "maintenance-failure-" +
+                crypt.hash(table + ":" + id).slice(0, 24),
+              {
+                type: "maintenance_item_failure",
+                table,
+                code: safeCode(e),
+                provider_code: String(e?.errCode || e?.code || "UNAVAILABLE")
+                  .replace(/[^a-zA-Z0-9_-]/g, "")
+                  .slice(0, 64),
+                created_at: Date.now(),
+              },
+            ),
+          );
         }
         cursor[table] = id;
         visited++;
       }
       if (visited === rows.length && rows.length < limit) cursor[table] = "";
-      cursor.next_batch = (index + 1) % batches.length;
+      cursor.next_batch =
+        deferred && visited === 0 ? index : (index + 1) % batches.length;
+      if (deferred) break;
     }
     cursor.last_completed_at = Date.now();
     cursor.last_processed = processed;
