@@ -552,3 +552,71 @@ test("备份图片的实际文件字节往返，恢复重新上传并绑定新�
   assert.deepEqual(Buffer.from(files.get(stored.file_id)), bytes);
   api.chooseKitchen(kid);
 });
+
+test("离开备份页后，晚到的文件列表和导出结果不回填私有内容", async () => {
+  const backupService = require("../miniprogram/services/backup");
+  const oldSaved = backupService.savedBackups;
+  const oldExport = backupService.exportKitchen;
+  try {
+    for (const [action, leave] of [
+      ["onShow", "onHide"],
+      ["create", "onHide"],
+      ["onShow", "onUnload"],
+      ["create", "onUnload"],
+    ]) {
+      let resume, started;
+      const began = new Promise((r) => {
+        started = r;
+      });
+      const held = new Promise((r) => {
+        resume = r;
+      });
+      backupService.savedBackups = async () => {
+        started();
+        return held;
+      };
+      backupService.exportKitchen = async () => [
+        { path: "/local-test-only/private.zip" },
+      ];
+      const p = page("backup");
+      const pending = p[action]();
+      await began;
+      p[leave]();
+      resume([{ path: "/local-test-only/private.zip", name: "私人厨房备份" }]);
+      await pending;
+      assert.deepEqual(p.data.files, [], action);
+    }
+  } finally {
+    backupService.savedBackups = oldSaved;
+    backupService.exportKitchen = oldExport;
+  }
+});
+
+test("离开备份页后迟到的恢复确认不能创建厨房", async () => {
+  const backupService = require("../miniprogram/services/backup");
+  const originalModal = wx.showModal;
+  const originalRestore = backupService.restoreBackup;
+  let resume,
+    calls = 0;
+  try {
+    wx.showModal = () =>
+      new Promise((r) => {
+        resume = r;
+      });
+    backupService.restoreBackup = async () => {
+      calls++;
+      return { kitchenId: "unexpected", restored: 0, total: 0 };
+    };
+    const p = page("backup");
+    p._archive = { data: { kitchen: { name: "private" } } };
+    const pending = p.restore();
+    p.onHide();
+    resume({ confirm: true });
+    await pending;
+    assert.equal(calls, 0);
+    assert.equal(p.data.restoredKitchen, "");
+  } finally {
+    wx.showModal = originalModal;
+    backupService.restoreBackup = originalRestore;
+  }
+});

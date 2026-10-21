@@ -31,10 +31,12 @@ Page({
   },
   async onShow() {
     this._visible = true;
+    const epoch = this._epoch;
     try {
-      this.setData({ files: await savedBackups() });
+      const files = await savedBackups();
+      if (this._visible && epoch === this._epoch) this.setData({ files });
     } catch (e) {
-      failure(e);
+      if (this._visible && epoch === this._epoch) failure(e);
     }
   },
   onHide() {
@@ -47,6 +49,9 @@ Page({
       historyExpanded: false,
       files: [],
     });
+  },
+  onUnload() {
+    this.onHide();
   },
   images(e: WechatMiniprogram.SwitchChange) {
     this.setData({ includeImages: e.detail.value });
@@ -74,20 +79,24 @@ Page({
         },
         cancelled: () => epoch !== this._epoch,
       });
-      if (epoch === this._epoch)
+      if (!this._visible || epoch !== this._epoch) return;
+      const saved = await savedBackups();
+      if (this._visible && epoch === this._epoch)
         this.setData({
-          files: await savedBackups(),
+          files: saved,
           progress:
             "已完成 " +
             files.length +
             " 个备份分卷，请把本次生成的文件全部保存。",
         });
     } catch (e) {
-      if (epoch === this._epoch)
+      if (!this._visible || epoch !== this._epoch) return;
+      const saved = await savedBackups().catch(() => []);
+      if (this._visible && epoch === this._epoch)
         this.setData({
           error: (e as Error).message,
           progress: "导出未完成，已生成的部分不能当作完整备份。",
-          files: await savedBackups(),
+          files: saved,
         });
     } finally {
       if (epoch === this._epoch) this.setData({ busy: false });
@@ -118,16 +127,18 @@ Page({
   async removeFile(e: WechatMiniprogram.TouchEvent) {
     const file = this.data.files[Number(e.currentTarget.dataset.index)];
     if (!file) return;
+    const epoch = this._epoch;
     const r = await wx.showModal({
       title: "删除本机备份副本",
       content:
         "请先确认已收藏或另存。这里只删除本机文件，不会删除厨房数据或微信收藏中的副本。",
       confirmText: "删除副本",
     });
-    if (r.confirm)
+    if (r.confirm && this._visible && epoch === this._epoch)
       try {
         await removeLocalBackup(file.path);
-        this.setData({ files: await savedBackups() });
+        const files = await savedBackups();
+        if (this._visible && epoch === this._epoch) this.setData({ files });
       } catch (e) {
         failure(e);
       }
@@ -174,6 +185,8 @@ Page({
   },
   async restore() {
     if (this.data.busy || !this._archive) return;
+    const archive = this._archive,
+      promptEpoch = this._epoch;
     const answer = await wx.showModal({
       title: "恢复为一间新厨房",
       content: this.data.textOnly
@@ -181,9 +194,14 @@ Page({
         : "恢复此分卷的菜谱与图片；图片需要重新通过平台审核。历史饭局保留在备份文件中，不重开饭局或恢复旧成员权限。",
       confirmText: "开始恢复",
     });
-    if (!answer.confirm) return;
-    const epoch = ++this._epoch,
-      archive = this._archive;
+    if (
+      !answer.confirm ||
+      !this._visible ||
+      promptEpoch !== this._epoch ||
+      archive !== this._archive
+    )
+      return;
+    const epoch = ++this._epoch;
     this.setData({ busy: true, error: "", progress: "正在恢复…" });
     try {
       const r = await restoreBackup(
