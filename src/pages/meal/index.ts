@@ -19,7 +19,18 @@ import type { Meal } from "../../services/types";
 let timer: ReturnType<typeof setInterval> | null = null;
 Page({
   _epoch: 0,
+  _panelMealId: "",
+  _panelRole: "",
   data: {
+    panel: "selection",
+    showRequests: false,
+    showPrices: false,
+    respondedAccounts: 0,
+    representedPeople: 0,
+    finishedItems: 0,
+    totalItems: 0,
+    progressPercent: 0,
+    stageTip: "",
     publicMode: false,
     publicPreview: null as any,
     shareId: "",
@@ -70,7 +81,18 @@ Page({
     this._epoch++;
     if (timer) clearInterval(timer);
     timer = null;
-    this.setData({ meal: null, prices: [], total: "", unpriced: 0, plans: [] });
+    this.setData({
+      meal: null,
+      prices: [],
+      total: "",
+      unpriced: 0,
+      plans: [],
+      inviteToken: "",
+      invitationId: "",
+      publicShareId: "",
+      showPrices: false,
+      showRequests: false,
+    });
   },
   onUnload() {
     this._epoch++;
@@ -117,7 +139,50 @@ Page({
             ...x,
             quantity: Math.min(20, x.requested_quantity),
           })) || [];
+      const sameRole = this._panelMealId === m.id && this._panelRole === m.role;
+      const panel = sameRole
+        ? this.data.panel
+        : m.role === "cook"
+          ? "kitchen"
+          : m.status === "open"
+            ? "selection"
+            : "progress";
+      const oldPrices = sameRole ? this.data.prices : [];
+      this._panelMealId = m.id;
+      this._panelRole = m.role;
+      const finishedItems = m.items.filter((x) =>
+        ["served", "skipped"].includes(x.status),
+      ).length;
       this.setData({
+        panel,
+        inviteToken: sameRole ? this.data.inviteToken : "",
+        invitationId: sameRole ? this.data.invitationId : "",
+        publicShareId: sameRole ? this.data.publicShareId : "",
+        showPrices: sameRole ? this.data.showPrices : false,
+        showRequests: sameRole ? this.data.showRequests : false,
+        respondedAccounts: m.requests?.length || 0,
+        representedPeople:
+          m.requests?.reduce((sum, x) => sum + (x.people || 1), 0) || 0,
+        finishedItems,
+        totalItems: m.items.length,
+        progressPercent: m.items.length
+          ? Math.round((finishedItems / m.items.length) * 100)
+          : 0,
+        stageTip:
+          (
+            {
+              open: "先告诉厨师你想吃什么，截止前都可以调整。",
+              locked: m.plan_confirmed
+                ? "菜单已确认，等厨师开始做。"
+                : "大家的选择已锁定，厨师正在安排实际份数。",
+              cooking: "锅里正热闹，做好一道，就上桌一道。",
+              completed: m.served
+                ? "这一顿，已经可以开饭了。"
+                : "这一顿暂未开餐，换个时间再约。",
+              archived: "一顿好饭，已经收进回忆里。",
+              cancelled: "计划有变，期待下一次相聚。",
+            } as Record<string, string>
+          )[m.status] || "",
         meal: m,
         status: statusLabel(m.status, m.served),
         when: dateLabel(m.scheduled_at),
@@ -130,16 +195,32 @@ Page({
         people: String(draft.people || 1),
         selectionRevision: draft.revision,
         stale: !!local && local.revision !== m.selection.revision,
-        plans: poll && this.data.plans.length ? this.data.plans : plans,
+        plans:
+          m.role === "cook"
+            ? poll && sameRole && this.data.plans.length
+              ? this.data.plans
+              : plans
+            : [],
         prices:
           m.role === "cook"
             ? (m.chef_prices || []).map((p) => ({
                 ...p,
-                value:
-                  p.unit_price_minor == null ? "" : money(p.unit_price_minor),
+                value: oldPrices.find((x) => x.dish_id === p.dish_id)?.dirty
+                  ? oldPrices.find((x) => x.dish_id === p.dish_id).value
+                  : p.unit_price_minor == null
+                    ? ""
+                    : money(p.unit_price_minor),
+                dirty: !!oldPrices.find((x) => x.dish_id === p.dish_id)?.dirty,
+                conflict: !!oldPrices.find((x) => x.dish_id === p.dish_id)
+                  ?.conflict,
+                expectedRevision: oldPrices.find((x) => x.dish_id === p.dish_id)
+                  ?.dirty
+                  ? oldPrices.find((x) => x.dish_id === p.dish_id)
+                      .expectedRevision
+                  : m.chef_quote?.revision,
               }))
             : [],
-        total: money(m.chef_quote?.total_known_minor),
+        total: m.role === "cook" ? money(m.chef_quote?.total_known_minor) : "",
         unpriced: m.chef_quote?.unpriced_count || 0,
         pollFailed: false,
       });
@@ -166,6 +247,23 @@ Page({
       this.setData({ loading: false });
     }
   },
+  choosePanel(e: WechatMiniprogram.TouchEvent) {
+    const panel = e.currentTarget.dataset.panel;
+    const allowed =
+      this.data.meal?.role === "cook"
+        ? ["kitchen", "selection", "more"]
+        : ["selection", "progress"];
+    if (allowed.includes(panel)) this.setData({ panel });
+  },
+  toggleRequests() {
+    this.setData({ showRequests: !this.data.showRequests });
+  },
+  togglePrices() {
+    this.setData({ showPrices: !this.data.showPrices });
+  },
+  history() {
+    wx.navigateTo({ url: "/pages/history/index" });
+  },
   peopleInput(e: WechatMiniprogram.Input) {
     this.setData({ people: e.detail.value });
     this.saveDraft();
@@ -184,8 +282,13 @@ Page({
   },
   saveDraft() {
     const m = this.data.meal;
-    if (m)
-      saveSelection(m.id, {
+    if (
+      m &&
+      Number.isInteger(Number(this.data.people)) &&
+      Number(this.data.people) >= 1 &&
+      Number(this.data.people) <= 20
+    )
+      return saveSelection(m.id, {
         items: this.data.draft.map((i) => ({
           dish_id: i.dish_id,
           quantity: i.quantity,
@@ -194,6 +297,7 @@ Page({
         people: Number(this.data.people),
         revision: this.data.selectionRevision,
       });
+    return false;
   },
   async restoreServer() {
     const confirm = await wx.showModal({
@@ -207,7 +311,12 @@ Page({
   async submit() {
     const m = this.data.meal;
     if (!m || this.data.busy) return;
-    this.saveDraft();
+    const people = Number(this.data.people);
+    if (!Number.isInteger(people) || people < 1 || people > 20) {
+      failure(Error("请填写1至20位用餐人数"));
+      return;
+    }
+    if (!this.saveDraft()) return;
     this.setData({ busy: true });
     try {
       await mutate("selection.replace", {
@@ -350,26 +459,58 @@ Page({
   },
   priceInput(e: WechatMiniprogram.Input) {
     const i = Number(e.currentTarget.dataset.index);
-    this.setData({ ["prices[" + i + "].value"]: e.detail.value });
+    const row = this.data.prices[i];
+    if (!row) return;
+    this.setData({
+      ["prices[" + i + "].value"]: e.detail.value,
+      ["prices[" + i + "].dirty"]: true,
+      ["prices[" + i + "].expectedRevision"]: row.dirty
+        ? row.expectedRevision
+        : this.data.meal?.chef_quote?.revision,
+    });
   },
   async priceSave(e: WechatMiniprogram.TouchEvent) {
     const m = this.data.meal;
     if (!m?.chef_quote || this.data.busy) return;
-    const p = this.data.prices[Number(e.currentTarget.dataset.index)];
+    const priceIndex = Number(e.currentTarget.dataset.index);
+    const p = this.data.prices[priceIndex];
+    if (!p) return;
     this.setData({ busy: true });
     try {
       await mutate("price.update", {
         meal_id: m.id,
         dish_id: p.dish_id,
         unit_price_minor: parseMoney(p.value),
-        expected_revision: m.chef_quote.revision,
+        expected_revision: p.expectedRevision ?? m.chef_quote.revision,
       });
+      this.setData({ ["prices[" + priceIndex + "].dirty"]: false });
       await this.refresh();
     } catch (e) {
+      if ((e as { code?: string }).code === "CONFLICT")
+        this.setData({ ["prices[" + priceIndex + "].conflict"]: true });
       failure(e);
     } finally {
       this.setData({ busy: false });
     }
+  },
+  async resetPrice(e: WechatMiniprogram.TouchEvent) {
+    const i = Number(e.currentTarget.dataset.index),
+      old = this.data.prices[i];
+    if (!old) return;
+    await this.refresh(true);
+    const m = this.data.meal;
+    if (m?.role !== "cook") return;
+    const latest = m.chef_prices?.find((p) => p.dish_id === old.dish_id);
+    if (!latest) return;
+    const index = this.data.prices.findIndex((p) => p.dish_id === old.dish_id);
+    if (index < 0) return;
+    this.setData({
+      ["prices[" + index + "].value"]:
+        latest.unit_price_minor == null ? "" : money(latest.unit_price_minor),
+      ["prices[" + index + "].dirty"]: false,
+      ["prices[" + index + "].conflict"]: false,
+      ["prices[" + index + "].expectedRevision"]: m.chef_quote?.revision,
+    });
   },
   async invitation() {
     const m = this.data.meal;
@@ -388,6 +529,36 @@ Page({
   async copyInvite() {
     if (this.data.inviteToken)
       await wx.setClipboardData({ data: this.data.inviteToken });
+  },
+  async revokeAll(e: WechatMiniprogram.TouchEvent) {
+    const m = this.data.meal;
+    if (!m || this.data.busy) return;
+    const kind = e.currentTarget.dataset.kind;
+    if (!["invitation", "share"].includes(kind)) return;
+    const answer = await wx.showModal({
+      title:
+        kind === "invitation" ? "撤销本餐所有邀请？" : "撤销本餐所有公开摘要？",
+      content:
+        kind === "invitation"
+          ? "此前发出的口令与邀请卡片都会失效，已加入的朋友不受影响。"
+          : "此前生成的所有公开链接和扫码入口都会失效。已保存的图片无法从他人设备中收回。",
+    });
+    if (!answer.confirm) return;
+    this.setData({ busy: true });
+    try {
+      await mutate(kind + ".revokeAll", { meal_id: m.id });
+      this.setData(
+        kind === "invitation"
+          ? { inviteToken: "", invitationId: "" }
+          : { publicShareId: "" },
+      );
+      await this.refresh();
+      wx.showToast({ title: "此前链接已全部失效" });
+    } catch (e) {
+      failure(e);
+    } finally {
+      this.setData({ busy: false });
+    }
   },
   async revokeInvite() {
     if (!this.data.invitationId) return;
@@ -446,6 +617,38 @@ Page({
       title: this.data.meal?.title || "一桌好饭",
       query: this.data.publicShareId ? "share=" + this.data.publicShareId : "",
     };
+  },
+  async assignPicker(e: WechatMiniprogram.PickerChange) {
+    const m = this.data.meal;
+    const candidate = m?.cook_candidates?.[Number(e.detail.value)];
+    if (!m || !candidate || this.data.busy) return;
+    const answer = await wx.showModal({
+      title: "交给" + candidate.name + "掌勺？",
+      content:
+        "对方会接手本餐工作台和内部参考价。交接后你将不能再查看本餐内部金额。",
+    });
+    if (!answer.confirm) return;
+    this.setData({ busy: true });
+    try {
+      await mutate("meal.assignCook", {
+        meal_id: m.id,
+        member_id: candidate.id,
+        expected_revision: m.revision,
+      });
+      this.setData({
+        prices: [],
+        total: "",
+        plans: [],
+        inviteToken: "",
+        invitationId: "",
+        publicShareId: "",
+      });
+      await this.refresh();
+    } catch (e) {
+      failure(e);
+    } finally {
+      this.setData({ busy: false });
+    }
   },
   async assign() {
     const m = this.data.meal;

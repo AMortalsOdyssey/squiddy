@@ -1,13 +1,48 @@
+.privacy-head {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  min-height: 88rpx;
+}
+.privacy-head .muted {
+  font-size: 23rpx;
+  margin-top: 6rpx;
+}
 .paragraph {
-  margin: 18rpx 0;
-  line-height: 1.8;
+  margin: 24rpx 0 8rpx;
+  line-height: 1.9;
+  font-size: 25rpx;
   white-space: pre-wrap;
+  padding-top: 24rpx;
+  border-top: 1rpx solid rgba(36, 75, 59, 0.08);
+}
+.privacy-demo {
+  font-size: 22rpx;
+  margin-top: 20rpx;
 }
 .export {
-  max-height: 500rpx;
+  height: 320rpx;
   word-break: break-all;
-  font-size: 22rpx;
+  font-size: 21rpx;
+  background: rgba(36, 75, 59, 0.04);
+  border-radius: 16rpx;
+  padding: 20rpx;
+  margin-top: 20rpx;
 }
-.section-title {
-  margin-top: 36rpx;
+.export-ready {
+  font-size: 25rpx;
+  color: #244b3b;
+  margin-top: 28rpx;
+}
+.feedback-receipt {
+  font-size: 23rpx;
+  color: rgba(36, 51, 43, 0.6);
+  margin-top: 20rpx;
+  word-break: break-all;
+}
+.account-removal {
+  border: 1rpx solid rgba(190, 99, 69, 0.1);
+}
+.account-removal .text-danger {
+  margin-bottom: 0;
 }

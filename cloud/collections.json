@@ -1,5 +1,5 @@
 {
-  "status": "not-deployed",
+  "status": "schema-only",
   "clientRules": "database.rules.json",
   "collections": [
     {
@@ -128,5 +128,5 @@
       "keyPolicy": "Server-generated resource key or deterministic SHA256 relationship key"
     }
   ],
-  "note": "CloudBase document keys intentionally use server IDs, not MongoDB ObjectId. Every collection denies direct client reads/writes. Create all collections before invoking functions."
+  "note": "CloudBase document keys intentionally use server IDs, not MongoDB ObjectId. Every collection denies direct client reads/writes. Create all collections before invoking functions. This manifest does not represent any environment deployment status."
 }

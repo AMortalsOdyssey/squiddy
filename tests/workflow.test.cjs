@@ -447,3 +447,62 @@ test("云身份必须来自本应用，伪造OPENID参数无效", async () => {
     "UNAUTHORIZED",
   );
 });
+
+test("统一撤销使换页前和旧格式邀请全部失效，重试撤销不影响后来新生成的邀请", async () => {
+  const f = await setup();
+  const second = await f.call("chef", "invitation.create", { meal_id: f.mid });
+  await f.store.transaction(async (tx) => {
+    for (const row of await tx.scan("invitations")) {
+      delete row.data.epoch;
+      await tx.put("invitations", row.id, row.data);
+    }
+  });
+  await rejects(
+    f.call("alice", "invitation.revokeAll", { meal_id: f.mid }),
+    "FORBIDDEN",
+  );
+  const payload = { meal_id: f.mid, request_id: "revoke-all-invites" };
+  await f.call("chef", "invitation.revokeAll", payload);
+  for (const token of [f.invitation.token, second.token])
+    await rejects(
+      f.call("eve", "invitation.resolve", { token }),
+      "INVITATION_EXPIRED",
+    );
+  const fresh = await f.call("chef", "invitation.create", { meal_id: f.mid });
+  await f.call("chef", "invitation.revokeAll", payload);
+  await f.call("eve", "invitation.accept", { token: fresh.token });
+  assert.equal(
+    (await f.call("chef", "meal.read", { meal_id: f.mid })).participant_count,
+    4,
+  );
+});
+test("统一撤销覆盖所有旧公开摘要，重新生成与匿名读取仍正常且无私有字段", async () => {
+  const f = await setup();
+  const shares = [];
+  for (let i = 0; i < 2; i++)
+    shares.push(await f.call("chef", "share.create", { meal_id: f.mid }));
+  await f.store.transaction(async (tx) => {
+    for (const row of await tx.scan("public_shares")) {
+      delete row.data.epoch;
+      await tx.put("public_shares", row.id, row.data);
+    }
+  });
+  await rejects(
+    f.call("alice", "share.revokeAll", { meal_id: f.mid }),
+    "FORBIDDEN",
+  );
+  const payload = { meal_id: f.mid, request_id: "revoke-all-shares" };
+  await f.call("chef", "share.revokeAll", payload);
+  for (const s of shares) {
+    await rejects(publicRead(f.store, s.id, f.now()), "NOT_FOUND");
+    await rejects(
+      f.call("chef", "share.ownerRead", { share_id: s.id }),
+      "NOT_FOUND",
+    );
+  }
+  const fresh = await f.call("chef", "share.create", { meal_id: f.mid });
+  await f.call("chef", "share.revokeAll", payload);
+  const view = await publicRead(f.store, fresh.id, f.now());
+  noPrivateKeys(view);
+  assert.deepEqual(Object.keys(view).sort(), ["dishes", "title"]);
+});

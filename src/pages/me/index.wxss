@@ -1,8 +1,63 @@
-.hero {
-  margin: 20rpx 0;
+.profile-head {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+  padding: 24rpx 0 32rpx;
 }
-.hero-title {
-  font-size: 44rpx;
+.profile-avatar {
+  width: 108rpx;
+  height: 108rpx;
+  background: #244b3b;
+  color: #fffefa;
+  border-radius: 32rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48rpx;
+}
+.profile-name {
+  font-size: 38rpx;
   font-weight: 600;
-  margin-bottom: 14rpx;
+  line-height: 1.4;
+  margin-bottom: 8rpx;
+}
+.kitchen-list,
+.account-links {
+  margin-top: 0;
+  padding: 4rpx 28rpx;
+}
+.kitchen-monogram,
+.account-icon {
+  width: 72rpx;
+  height: 72rpx;
+  background: rgba(36, 75, 59, 0.06);
+  color: #244b3b;
+  border-radius: 20rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30rpx;
+  flex-shrink: 0;
+}
+.account-icon {
+  font-size: 27rpx;
+}
+.account-links .muted {
+  font-size: 23rpx;
+  margin-top: 4rpx;
+}
+.kitchen-empty {
+  padding: 36rpx 0;
+}
+.kitchen-empty .muted {
+  margin-top: 12rpx;
+}
+.demo-tools > .muted {
+  margin-top: 12rpx;
+}
+.brand-footer {
+  color: rgba(36, 51, 43, 0.4);
+  font-size: 22rpx;
+  text-align: center;
+  padding: 32rpx 0;
 }

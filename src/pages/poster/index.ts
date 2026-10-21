@@ -1,7 +1,8 @@
-import { call, isLocal, failure } from "../../services/api";
+import { call, isLocal, failure, profile } from "../../services/api";
 Page({
   data: {
     local: isLocal,
+    hasCode: false,
     share: "",
     error: "",
     loading: true,
@@ -18,9 +19,11 @@ Page({
   async render() {
     this.setData({ loading: true, error: "", imagePath: "" });
     try {
-      const result = isLocal
-        ? await call("share.ownerRead", { share_id: this.data.share })
-        : await call("poster.code", { share_id: this.data.share });
+      const hasCode = !isLocal && !!(await profile()).features.poster;
+      this.setData({ hasCode });
+      const result = hasCode
+        ? await call("poster.code", { share_id: this.data.share })
+        : await call("share.ownerRead", { share_id: this.data.share });
       this.setData({ title: result.title, dishes: result.dishes });
       const canvas: any = await new Promise((resolve, reject) =>
         wx
@@ -57,9 +60,13 @@ Page({
         ctx.font = "12px sans-serif";
         ctx.fillText("还有" + (result.dishes.length - 8) + "道拿手菜", 24, 356);
       }
-      if (isLocal) {
+      if (!hasCode) {
         ctx.font = "14px sans-serif";
-        ctx.fillText("本地演练 · 没有可扫码凭据", 24, 414);
+        ctx.fillText(
+          isLocal ? "本地演练 · 没有可扫码凭据" : "一张菜单分享图 · 无扫码入口",
+          24,
+          414,
+        );
       } else {
         const path = wx.env.USER_DATA_PATH + "/squiddy-code.png";
         await new Promise<void>((resolve, reject) =>

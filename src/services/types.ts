@@ -64,7 +64,12 @@ export interface Meal extends MealSummary {
   }[];
   selection: Selection;
   participant_count: number;
-  requests?: { name: string; items: Selection["items"]; note: string }[];
+  requests?: {
+    name: string;
+    items: Selection["items"];
+    note: string;
+    people?: number;
+  }[];
   summary?: {
     dish_id: string;
     name: string;
@@ -91,7 +96,13 @@ export interface Profile {
   name: string;
   kitchens: KitchenSummary[];
   limits: Record<string, number>;
-  features: { paid: boolean; notifications: boolean; template_id: string };
+  features: {
+    paid: boolean;
+    notifications: boolean;
+    template_id: string;
+    media?: boolean;
+    poster?: boolean;
+  };
 }
 export interface Recommendation {
   id: string;

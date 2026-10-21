@@ -41,6 +41,7 @@
           data-field="cutoffMinutes"
           bindinput="input" /></view
     ></view>
+    <view wx:if="{{draftSaved}}" class="muted">未发布的安排已暂存，退出后可以继续。</view>
     <view class="section-title">这次可以点什么 · {{selected.length}}道</view
     ><checkbox-group bindchange="select"
       ><label class="card compact row" wx:for="{{dishes}}" wx:key="id"

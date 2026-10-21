@@ -1,4 +1,14 @@
 .number-input {
   width: 120rpx;
-  text-align: right;
+  text-align: center;
+}
+
+checkbox-group {
+  display: block;
+}
+checkbox-group label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24rpx;
 }

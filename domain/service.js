@@ -27,6 +27,7 @@ const writable = new Set([
   "meal.publish",
   "invitation.create",
   "invitation.revoke",
+  "invitation.revokeAll",
   "invitation.accept",
   "selection.replace",
   "meal.lock",
@@ -42,6 +43,7 @@ const writable = new Set([
   "media.complete",
   "share.create",
   "share.revoke",
+  "share.revokeAll",
 ]);
 function createService({
   store,
@@ -326,6 +328,8 @@ function createService({
           actor,
           [
             "invitation.create",
+            "invitation.revokeAll",
+            "share.revokeAll",
             "meal.lock",
             "meal.unlock",
             "meal.cancel",
@@ -785,6 +789,7 @@ function createService({
           const invite = {
             id: inviteId,
             creator: actor,
+            epoch: m.invite_epoch || 0,
             token_hash: tokenHash,
             kitchen_id: m.kitchen_id,
             meal_id: m.id,
@@ -801,6 +806,19 @@ function createService({
             creator: actor,
           });
           result = { id: inviteId, token, expires_at: invite.expires_at };
+          break;
+        }
+        case "invitation.revokeAll": {
+          const { meal: m } = await mealAccess(
+            tx,
+            payload.meal_id,
+            actor,
+            true,
+          );
+          m.invite_epoch = (m.invite_epoch || 0) + 1;
+          m.revision++;
+          await tx.put("meals", m.id, m);
+          result = { revoked: true };
           break;
         }
         case "invitation.revoke": {
@@ -829,6 +847,11 @@ function createService({
             k.status === "active" && m.status === "open" && now < m.cutoff_at,
             "CLOSED",
             "饭局已停止接受点菜",
+          );
+          ensure(
+            (invite.epoch || 0) === (m.invite_epoch || 0),
+            "INVITATION_EXPIRED",
+            "邀请已过期或被撤销",
           );
           if (action === "invitation.resolve") {
             result = {
@@ -1439,6 +1462,7 @@ function createService({
           const sid = crypto.random(12);
           await tx.put("public_shares", sid, {
             id: sid,
+            epoch: m.share_epoch || 0,
             creator: actor,
             kitchen_id: m.kitchen_id,
             meal_id: m.id,
@@ -1455,13 +1479,28 @@ function createService({
         }
         case "share.ownerRead": {
           const share = await load(tx, "public_shares", id(payload.share_id));
-          await mealAccess(tx, share.meal_id, actor, true);
+          const { meal: m } = await mealAccess(tx, share.meal_id, actor, true);
           ensure(
-            !share.revoked && share.expires_at > now,
+            (share.epoch || 0) === (m.share_epoch || 0) &&
+              !share.revoked &&
+              share.expires_at > now,
             "NOT_FOUND",
             "分享已失效",
           );
           result = { id: share.id, title: share.title, dishes: share.dishes };
+          break;
+        }
+        case "share.revokeAll": {
+          const { meal: m } = await mealAccess(
+            tx,
+            payload.meal_id,
+            actor,
+            true,
+          );
+          m.share_epoch = (m.share_epoch || 0) + 1;
+          m.revision++;
+          await tx.put("meals", m.id, m);
+          result = { revoked: true };
           break;
         }
         case "share.revoke": {

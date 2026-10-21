@@ -31,6 +31,7 @@ async function publicRead(store, shareId, now = Date.now()) {
     ensure(
       k?.status === "active" &&
         m &&
+        (s.epoch || 0) === (m.share_epoch || 0) &&
         !["cancelled", "archived"].includes(m.status),
       "NOT_FOUND",
       "分享已失效",

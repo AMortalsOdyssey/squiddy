@@ -14,8 +14,15 @@
 }
 .number-input {
   max-width: 160rpx;
-  text-align: right;
+  text-align: center;
 }
 .tall {
-  min-height: 320rpx;
+  min-height: 260rpx;
+  height: 260rpx;
+}
+
+.draft-note {
+  color: rgba(36, 51, 43, 0.62);
+  font-size: 22rpx;
+  padding: 16rpx 0;
 }

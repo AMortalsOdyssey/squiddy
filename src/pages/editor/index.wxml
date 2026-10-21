@@ -5,7 +5,7 @@
   ><view class="title">{{dishId?'编辑菜谱':'一道拿手菜'}}</view
   ><view wx:if="{{error}}" class="note">{{error}}</view
   ><block wx:elif="{{!loading}}">
-    <view class="photo-picker" bindtap="photo"
+    <view wx:if="{{mediaAvailable || imageId}}" class="photo-picker" bindtap="photo"
       ><image wx:if="{{imageUrl}}" src="{{imageUrl}}" mode="aspectFill" /><view
         wx:else
         >＋ 拍一张菜的照片<view class="muted"
@@ -13,6 +13,9 @@
         ></view
       ></view
     >
+    <view wx:if="{{!mediaAvailable}}" class="muted">照片功能准备中，可以先把食材和做法记下来。</view>
+    <view wx:if="{{draftSaved}}" class="draft-note">文字草稿已暂存 · 图片与内部价格请保存后再离开</view>
+    <view wx:if="{{dirty&&!draftSaved}}" class="note">草稿暂存失败，请先保存菜谱再离开。</view>
     <view wx:if="{{imageId}}" class="row"
       ><text class="muted"
         >{{imageStatus==='approved'?'图片已就绪':imageStatus==='pending'?'等待安全审核':'图片尚未就绪'}}</text

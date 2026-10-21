@@ -1,7 +1,12 @@
 {
   "permissions": {
-    "openapi": [
-      "subscribeMessage.send"
-    ]
-  }
+    "openapi": ["subscribeMessage.send"]
+  },
+  "triggers": [
+    {
+      "name": "squiddy-maintenance",
+      "type": "timer",
+      "config": "0 */5 * * * * *"
+    }
+  ]
 }

@@ -10,11 +10,14 @@ function cloudStore(db) {
               const result = await transaction.collection(table).doc(id).get();
               return Array.isArray(result.data) ? result.data[0] : result.data;
             } catch (e) {
+              const message = e.errMsg || "";
               if (
-                e.errCode === -502001 &&
-                /document.*not.*exist|document.*not.*found/i.test(
-                  e.errMsg || "",
-                )
+                (e.errCode === -502001 &&
+                  /document.*not.*exist|document.*not.*found/i.test(message)) ||
+                (e.errCode === -1 &&
+                  /^document\.get:fail document with _id .+ does not exist$/.test(
+                    message,
+                  ))
               )
                 return undefined;
               throw e;

@@ -5,8 +5,8 @@
   "main": "index.js",
   "dependencies": {
     "wx-server-sdk": "4.0.2",
-    "lodash.set": "file:vendor/lodash.set",
-    "lodash.unset": "file:vendor/lodash.unset",
+    "lodash.set": "file:vendor/squiddy-safe-set-1.0.0.tgz",
+    "lodash.unset": "file:vendor/squiddy-safe-unset-1.0.0.tgz",
     "sharp": "0.35.5"
   },
   "overrides": {

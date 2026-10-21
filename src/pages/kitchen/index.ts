@@ -9,11 +9,17 @@ import {
   money,
   statusLabel,
   chooseMeal,
+  profile,
 } from "../../services/api";
 import type { Kitchen } from "../../services/types";
 Page({
   data: {
     local: isLocal,
+    panel: "recipes",
+    search: "",
+    dishFilter: "all",
+    visibleDishes: [] as any[],
+    mediaAvailable: isLocal,
     creating: false,
     editing: false,
     imageId: "",
@@ -39,11 +45,25 @@ Page({
     this.setData({ dishes: [], kitchen: null });
   },
   async refresh() {
-    this.setData({ loading: true, error: "" });
+    this.setData({
+      loading: true,
+      error: "",
+      kitchen: null,
+      dishes: [],
+      visibleDishes: [],
+      meals: [],
+    });
     try {
-      const k = await kitchen();
+      const [k, p] = await Promise.all([kitchen(), profile()]);
+      this.setData({ mediaAvailable: isLocal || !!p.features.media });
       this.setData({
         kitchen: k,
+        panel:
+          k.role === "owner"
+            ? this.data.panel
+            : this.data.panel === "members"
+              ? "recipes"
+              : this.data.panel,
         name: k.name,
         description: k.description,
         imageId: k.image_id,
@@ -57,11 +77,42 @@ Page({
           label: statusLabel(m.status, m.served),
         })),
       });
+      this.filterDishes();
     } catch (e) {
       this.setData({ error: (e as Error).message });
     } finally {
       this.setData({ loading: false });
     }
+  },
+  choosePanel(e: WechatMiniprogram.TouchEvent) {
+    const panel = e.currentTarget.dataset.panel;
+    const allowed =
+      this.data.kitchen?.role === "owner"
+        ? ["recipes", "history", "members"]
+        : ["recipes", "history"];
+    if (allowed.includes(panel)) this.setData({ panel });
+  },
+  searchInput(e: WechatMiniprogram.Input) {
+    this.setData({ search: e.detail.value });
+    this.filterDishes();
+  },
+  filterInput(e: WechatMiniprogram.TouchEvent) {
+    this.setData({ dishFilter: e.currentTarget.dataset.filter });
+    this.filterDishes();
+  },
+  filterDishes() {
+    const q = this.data.search.trim().toLowerCase();
+    this.setData({
+      visibleDishes: this.data.dishes.filter(
+        (d) =>
+          (d.name + " " + d.ingredients.join(" ")).toLowerCase().includes(q) &&
+          (this.data.dishFilter === "all" ||
+            (this.data.dishFilter === "active" ? d.active : !d.active)),
+      ),
+    });
+  },
+  history() {
+    wx.navigateTo({ url: "/pages/history/index" });
   },
   input(e: WechatMiniprogram.Input) {
     this.setData({ [e.currentTarget.dataset.field]: e.detail.value });
@@ -87,6 +138,13 @@ Page({
   },
   async cover() {
     if (this.data.busy) return;
+    if (!this.data.mediaAvailable) {
+      wx.showToast({
+        title: "照片功能准备中，厨房资料可以正常保存",
+        icon: "none",
+      });
+      return;
+    }
     this.setData({ busy: true });
     try {
       const pick = await wx.chooseMedia({
@@ -101,14 +159,12 @@ Page({
       if (isLocal) payload.local_path = file.tempFilePath;
       else
         payload.base64 = await new Promise<string>((resolve, reject) =>
-          wx
-            .getFileSystemManager()
-            .readFile({
-              filePath: file.tempFilePath,
-              encoding: "base64",
-              success: (r) => resolve(r.data as string),
-              fail: reject,
-            }),
+          wx.getFileSystemManager().readFile({
+            filePath: file.tempFilePath,
+            encoding: "base64",
+            success: (r) => resolve(r.data as string),
+            fail: reject,
+          }),
         );
       const r = await mutate("media.complete", payload);
       this.setData({
@@ -160,7 +216,10 @@ Page({
   },
   edit(e: WechatMiniprogram.TouchEvent) {
     wx.navigateTo({
-      url: "/pages/editor/index?id=" + e.currentTarget.dataset.id,
+      url:
+        (this.data.kitchen?.role === "member"
+          ? "/pages/dish/index?id="
+          : "/pages/editor/index?id=") + e.currentTarget.dataset.id,
     });
   },
   publish() {

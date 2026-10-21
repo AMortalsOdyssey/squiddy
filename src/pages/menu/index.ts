@@ -28,10 +28,12 @@ Page({
     dishes: [] as Row[],
     visible: [] as Row[],
     count: 0,
+    portions: 0,
     search: "",
     category: "all",
     status: "",
     when: "",
+    cutoff: "",
     coverUrl: "",
     categories: [
       { id: "all", name: "全部" },
@@ -39,6 +41,7 @@ Page({
       { id: "vegetable", name: "素菜" },
       { id: "soup", name: "汤羹" },
       { id: "staple", name: "主食" },
+      { id: "dessert", name: "甜点" },
     ],
   },
   onShow() {
@@ -99,8 +102,10 @@ Page({
         meal: m,
         dishes: rows,
         count: rows.filter((d) => d.quantity > 0).length,
+        portions: rows.reduce((sum, d) => sum + d.quantity, 0),
         status: m ? statusLabel(m.status, m.served) : "",
         when: m ? dateLabel(m.scheduled_at) : "",
+        cutoff: m ? dateLabel(m.cutoff_at) : "",
       });
       this.filter();
     } catch (e) {
@@ -149,18 +154,17 @@ Page({
         .map((d) => ({ dish_id: d.id, quantity: d.quantity })),
     };
     if (saveSelection(m.id, draft)) {
-      this.setData({ dishes: rows, count: draft.items.length });
+      this.setData({
+        dishes: rows,
+        count: draft.items.length,
+        portions: rows.reduce((sum, d) => sum + d.quantity, 0),
+      });
       this.filter();
     }
   },
   detail(e: WechatMiniprogram.TouchEvent) {
     const d = this.data.dishes.find((d) => d.id === e.currentTarget.dataset.id);
-    if (d)
-      wx.showModal({
-        title: d.name,
-        content: `食材：${d.ingredients.join("、")}\n${d.allergens.length ? "过敏原：" + d.allergens.join("、") + "\n" : ""}${d.steps || "做法待厨师补充"}\n过敏者请与厨师确认交叉接触风险。`,
-        showCancel: false,
-      });
+    if (d) wx.navigateTo({ url: "/pages/dish/index?id=" + d.id });
   },
   async switchKitchen() {
     const p = this.data.profile;
@@ -174,17 +178,10 @@ Page({
     } catch {}
   },
   async switchMeal() {
-    const meals = this.data.kitchen?.meals || [];
-    if (!meals.length) return;
-    try {
-      const r = await wx.showActionSheet({
-        itemList: meals
-          .slice(0, 6)
-          .map((m) => m.title + " · " + statusLabel(m.status, m.served)),
-      });
-      chooseMeal(meals[r.tapIndex].id);
-      await this.refresh();
-    } catch {}
+    wx.navigateTo({ url: "/pages/history/index" });
+  },
+  join() {
+    wx.navigateTo({ url: "/pages/invite/index" });
   },
   create() {
     wx.navigateTo({ url: "/pages/kitchen/index?create=1" });

@@ -60,6 +60,26 @@ test("云模式构建在隔离目录排除演练引擎，缺环境配置则失�
       fs.readFileSync(path.join(dir, "miniprogram/config/runtime.js"), "utf8"),
       /cloud/,
     );
+    const appRoot = path.join(dir, "miniprogram");
+    const before = fs.statSync(appRoot).ino;
+    const appFile = path.join(appRoot, "app.json");
+    const appBefore = fs.statSync(appFile).ino;
+    fs.writeFileSync(path.join(appRoot, "obsolete.js"), "old build");
+    execFileSync(process.execPath, ["scripts/build.mjs"], {
+      cwd: dir,
+      stdio: "pipe",
+    });
+    assert.equal(
+      fs.statSync(appRoot).ino,
+      before,
+      "preserve Developer Tools root watcher",
+    );
+    assert.equal(
+      fs.statSync(appFile).ino,
+      appBefore,
+      "app.json must never disappear",
+    );
+    assert.equal(fs.existsSync(path.join(appRoot, "obsolete.js")), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -94,4 +114,29 @@ test("CloudBase适配器保留SDK的data包装，不把网络错误当成不存�
     await tx.remove("meals", "id");
     assert.equal(await tx.get("meals", "id"), undefined);
   });
+});
+test("CloudBase适配器兼容实际微信SDK的缺失文档错误", async () => {
+  const cloud = require("../cloudfunctions/api/node_modules/wx-server-sdk");
+  const { cloudStore } = require("../cloud/shared/store");
+  cloud.init({ env: "squiddy-contract-test" });
+  const sdkDb = cloud.database();
+  const reference = sdkDb.collection("users").doc("missing-user");
+  // Exercise the real SDK's document wrapper without making network calls.
+  reference._document.get = async () => ({ data: [] });
+  await assert.rejects(reference.get(), (error) => error.errCode === -1);
+  const store = cloudStore({
+    runTransaction: (fn) =>
+      fn({ collection: () => ({ doc: () => reference }) }),
+  });
+  assert.equal(
+    await store.transaction((tx) => tx.get("users", "missing-user")),
+    undefined,
+  );
+  reference._document.get = async () => {
+    throw new Error("network unavailable");
+  };
+  await assert.rejects(
+    store.transaction((tx) => tx.get("users", "missing-user")),
+    /network unavailable/,
+  );
 });

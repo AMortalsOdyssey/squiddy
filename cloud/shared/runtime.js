@@ -26,6 +26,7 @@ function makeRuntime({
   env = process.env,
   store = cloudStore(cloud.database()),
   imageProcessor,
+  maintenanceClock = Date.now,
 }) {
   const appid = env.SQUIDDY_APP_ID || "";
   const crypt = {
@@ -196,7 +197,15 @@ function makeRuntime({
       ensure(r.fileList?.[0]?.status === 0, "UNAVAILABLE", "图片暂不可用");
       return { url: r.fileList[0].tempFileURL };
     }
-    return service.execute(event.action, payload, context);
+    const result = await service.execute(event.action, payload, context);
+    if (event.action === "profile.get")
+      result.features = {
+        ...result.features,
+        media:
+          env.SQUIDDY_MEDIA_ENABLED === "true" && !!env.SQUIDDY_CALLBACK_SOURCE,
+        poster: env.SQUIDDY_POSTER_ENABLED === "true",
+      };
+    return result;
   }
   async function callback(event, context) {
     trustedSource(context, env.SQUIDDY_CALLBACK_SOURCE);
@@ -230,26 +239,18 @@ function makeRuntime({
   }
   async function maintenance(event, context) {
     trustedSource(context, "wx_trigger");
+    const deadline = maintenanceClock() + 1800;
     let processed = 0;
     const cursor = await store.transaction(
       async (tx) => (await tx.get("maintenance_state", "cursors")) || {},
     );
-    async function batch(table, work, limit = 10) {
-      const rows = await store.transaction((tx) =>
-        tx.scan(table, limit, cursor[table] || ""),
-      );
-      for (const { id, data } of rows) {
-        try {
-          await work(id, data);
-          processed++;
-        } catch (e) {
-          console.warn("maintenance.item_failed", { table, code: safeCode(e) });
-        }
-      }
-      cursor[table] = rows.length < limit ? "" : rows.at(-1).id;
+    const batches = [];
+    function batch(table, work, limit = 10) {
+      batches.push({ table, work, limit });
     }
     await batch("cleanup_jobs", async (id, data) => {
-      if (data.status !== "completed") await cleanupBatch(store, id);
+      if (data.status !== "completed")
+        await cleanupBatch(store, id, { batchSize: 5 });
     });
     await batch("media_callbacks", async (id, data) => {
       const result = await applyMediaResult(store, data.event, appid);
@@ -339,6 +340,36 @@ function makeRuntime({
         },
         20,
       );
+    // Leave time for the cursor commit within the free environment's 3s limit.
+    // Rotate tables even after a partial batch so a busy queue cannot starve
+    // notification recovery or retention cleanup.
+    const startBatch = Number.isInteger(cursor.next_batch)
+      ? cursor.next_batch % batches.length
+      : 0;
+    for (let offset = 0; offset < batches.length; offset++) {
+      if (maintenanceClock() >= deadline) break;
+      const index = (startBatch + offset) % batches.length;
+      const { table, work, limit } = batches[index];
+      const rows = await store.transaction((tx) =>
+        tx.scan(table, limit, cursor[table] || ""),
+      );
+      let visited = 0;
+      for (const { id, data } of rows) {
+        if (maintenanceClock() >= deadline) break;
+        try {
+          await work(id, data);
+          processed++;
+        } catch (e) {
+          console.warn("maintenance.item_failed", { table, code: safeCode(e) });
+        }
+        cursor[table] = id;
+        visited++;
+      }
+      if (visited === rows.length && rows.length < limit) cursor[table] = "";
+      cursor.next_batch = (index + 1) % batches.length;
+    }
+    cursor.last_completed_at = Date.now();
+    cursor.last_processed = processed;
     await store.transaction((tx) =>
       tx.put("maintenance_state", "cursors", cursor),
     );
@@ -357,17 +388,49 @@ function makeRuntime({
       const data = await handlers[kind](event, context);
       console.info("request.complete", {
         kind,
-        action: event?.action || "",
+        action: String(event?.action || "")
+          .replace(/[^a-zA-Z0-9_.-]/g, "")
+          .slice(0, 64),
         elapsed_ms: Date.now() - start,
       });
       return { ok: true, data };
     } catch (error) {
       const code = safeCode(error);
-      console.warn("request.failed", {
+      const diagnostic = {
         kind,
+        action: String(event?.action || "")
+          .replace(/[^a-zA-Z0-9_.-]/g, "")
+          .slice(0, 64),
         code,
+        provider_code: String(error?.errCode || error?.code || "")
+          .replace(/[^a-zA-Z0-9_-]/g, "")
+          .slice(0, 64),
+        operation: String(error?.errMsg || error?.message || "")
+          .split(":")[0]
+          .replace(/[^a-zA-Z0-9_.-]/g, "")
+          .slice(0, 80),
         elapsed_ms: Date.now() - start,
+      };
+      console.warn("request.failed", {
+        ...diagnostic,
       });
+      // Private operational evidence when the environment has no paid log service.
+      // Do not persist request bodies, identities, error messages or stack traces.
+      if (!(error instanceof AppError)) {
+        try {
+          const id = crypto.randomBytes(12).toString("hex");
+          await store.transaction((tx) =>
+            tx.put("audit_events", id, {
+              id,
+              type: "runtime_error",
+              ...diagnostic,
+              created_at: Date.now(),
+            }),
+          );
+        } catch {
+          console.warn("request.diagnostic_write_failed", { kind });
+        }
+      }
       return {
         ok: false,
         error: {

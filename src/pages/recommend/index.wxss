@@ -1,4 +1,63 @@
-.number-input {
-  width: 100rpx;
-  text-align: right;
+.preference-card {
+  padding-top: 12rpx;
+}
+.preference-card .form-row:first-child {
+  border: 0;
+}
+.preference-more {
+  width: 100%;
+  padding: 20rpx 0 0;
+  margin: 0;
+  background: transparent;
+  color: #244b3b;
+  display: flex;
+  justify-content: space-between;
+  font-size: 24rpx;
+}
+.recommendation-card {
+  background: #fffefa;
+  border-radius: 28rpx;
+  padding: 28rpx;
+  margin: 28rpx 0;
+}
+.plan-heading {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding-bottom: 24rpx;
+  border-bottom: 1rpx solid rgba(36, 75, 59, 0.08);
+}
+.plan-heading .muted {
+  font-size: 23rpx;
+  margin-top: 6rpx;
+}
+.plan-index {
+  font-size: 44rpx;
+  color: #244b3b;
+  opacity: 0.6;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.plan-dish {
+  display: flex;
+  gap: 16rpx;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid rgba(36, 75, 59, 0.05);
+  font-size: 27rpx;
+}
+.plan-portions {
+  color: #244b3b;
+  font-size: 25rpx;
+}
+.plan-warning {
+  color: rgba(36, 51, 43, 0.6);
+  font-size: 23rpx;
+  padding-top: 20rpx;
+}
+.recommendation-card .secondary {
+  font-size: 25rpx;
+}
+.recommendation-footnote {
+  font-size: 23rpx;
+  padding: 12rpx 8rpx;
 }

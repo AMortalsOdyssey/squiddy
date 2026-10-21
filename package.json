@@ -1,14 +1,15 @@
 {
   "name": "squiddy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test tests/*.test.cjs",
+    "test": "node scripts/test.mjs",
     "doctor": "node scripts/doctor.mjs",
-    "check": "npm run typecheck && npm test && npm run doctor",
+    "check": "npm run typecheck && npm run build && npm test && npm run doctor",
     "setup:cloud": "node scripts/install-cloud.mjs",
+    "prepare:cloud": "npm run build && node scripts/prepare-cloud.mjs",
     "audit:all": "node scripts/audit.mjs"
   },
   "devDependencies": {

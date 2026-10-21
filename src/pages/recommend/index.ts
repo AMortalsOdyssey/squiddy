@@ -11,8 +11,10 @@ import {
 } from "../../services/api";
 import type { Recommendation, Meal } from "../../services/types";
 Page({
+  _criteriaEpoch: 0,
   data: {
     local: isLocal,
+    advanced: false,
     people: "3",
     avoid: "",
     likes: "",
@@ -34,13 +36,27 @@ Page({
     }
   },
   input(e: WechatMiniprogram.Input) {
-    this.setData({ [e.currentTarget.dataset.field]: e.detail.value });
+    this._criteriaEpoch++;
+    this.setData({
+      [e.currentTarget.dataset.field]: e.detail.value,
+      plans: [],
+      message: "偏好已调整，重新搭配后再选择。",
+    });
   },
   toggle(e: WechatMiniprogram.SwitchChange) {
-    this.setData({ [e.currentTarget.dataset.field]: e.detail.value });
+    this._criteriaEpoch++;
+    this.setData({
+      [e.currentTarget.dataset.field]: e.detail.value,
+      plans: [],
+      message: "偏好已调整，重新搭配后再选择。",
+    });
+  },
+  toggleAdvanced() {
+    this.setData({ advanced: !this.data.advanced });
   },
   async generate() {
     if (this.data.loading) return;
+    const epoch = this._criteriaEpoch;
     this.setData({ loading: true, plans: [], message: "" });
     try {
       const r = await call("recommend", {
@@ -58,6 +74,7 @@ Page({
           .filter(Boolean),
         max_minutes: Number(this.data.maxMinutes),
       });
+      if (epoch !== this._criteriaEpoch) return;
       this.setData({ plans: r.plans, message: r.message });
     } catch (e) {
       failure(e);

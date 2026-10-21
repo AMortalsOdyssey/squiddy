@@ -9,6 +9,8 @@ Page({
   data: {
     local: isLocal,
     busy: false,
+    privacyExpanded: false,
+    exportPath: "",
     feedback: "",
     feedbackId: "",
     exportText: "",
@@ -20,7 +22,23 @@ Page({
     await this.status();
   },
   onHide() {
-    this.setData({ exportText: "" });
+    this.setData({ exportText: "", exportPath: "" });
+  },
+  togglePrivacy() {
+    this.setData({ privacyExpanded: !this.data.privacyExpanded });
+  },
+  async shareExport() {
+    if (!this.data.exportPath) return;
+    try {
+      if (typeof wx.shareFileMessage !== "function")
+        throw Error("当前微信暂不支持发送文件，可复制下方内容备份");
+      await wx.shareFileMessage({
+        filePath: this.data.exportPath,
+        fileName: "鱿鱼须须-我的数据.json",
+      });
+    } catch (e) {
+      if (!(e as any).errMsg?.includes("cancel")) failure(e);
+    }
   },
   async status() {
     try {
@@ -38,17 +56,15 @@ Page({
       const text = JSON.stringify(r, null, 2);
       const path = wx.env.USER_DATA_PATH + "/squiddy-export.json";
       await new Promise<void>((resolve, reject) =>
-        wx
-          .getFileSystemManager()
-          .writeFile({
-            filePath: path,
-            data: text,
-            encoding: "utf8",
-            success: () => resolve(),
-            fail: reject,
-          }),
+        wx.getFileSystemManager().writeFile({
+          filePath: path,
+          data: text,
+          encoding: "utf8",
+          success: () => resolve(),
+          fail: reject,
+        }),
       );
-      this.setData({ exportText: text });
+      this.setData({ exportText: text, exportPath: path });
       wx.showToast({ title: "导出文件已保存" });
       await wx.showModal({
         title: "导出已准备好",
@@ -104,7 +120,8 @@ Page({
       for (const key of keys)
         if (
           key.startsWith("squiddy-draft-v2-" + actor + "-") ||
-          key.startsWith("squiddy-pending-" + actor + "-")
+          key.startsWith("squiddy-pending-" + actor + "-") ||
+          key.startsWith("squiddy-form-v1-" + actor + "-")
         )
           wx.removeStorageSync(key);
       try {
@@ -112,7 +129,7 @@ Page({
           wx.env.USER_DATA_PATH + "/squiddy-export.json",
         );
       } catch {}
-      this.setData({ exportText: "" });
+      this.setData({ exportText: "", exportPath: "" });
       if (isLocal) await require("../../services/local").localCleanup();
       await this.status();
     } catch (e) {

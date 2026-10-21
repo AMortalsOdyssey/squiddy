@@ -1,4 +1,11 @@
 import {
+  saveForm,
+  loadForm,
+  clearForm,
+  warnUnsaved,
+  clearUnsavedWarning,
+} from "../../services/forms";
+import {
   kitchen,
   meal,
   currentKitchen,
@@ -10,6 +17,8 @@ import {
 Page({
   data: {
     local: isLocal,
+    draftSaved: false,
+    copyId: "",
     loading: true,
     busy: false,
     title: "一起吃顿饭",
@@ -22,6 +31,7 @@ Page({
     error: "",
   },
   async onLoad(q: Record<string, string>) {
+    this.setData({ copyId: q.copy || "" });
     const now = new Date(Date.now() + 86400000 + 8 * 3600000);
     this.setData({ date: now.toISOString().slice(0, 10) });
     try {
@@ -51,23 +61,69 @@ Page({
           })),
         });
       }
+      const draft = loadForm("publish", q.copy || "");
+      if (draft) {
+        const answer = await wx.showModal({
+          title: "继续上次安排的饭局？",
+          content: "恢复未发布的时间、人数与菜单，发布前可以继续调整。",
+          confirmText: "继续安排",
+          cancelText: "放弃草稿",
+        });
+        if (answer.confirm) {
+          const selected = ((draft.fields.selected as string[]) || []).filter(
+            (id) => this.data.dishes.some((d) => d.id === id),
+          );
+          this.setData({
+            ...draft.fields,
+            selected,
+            dishes: this.data.dishes.map((d) => ({
+              ...d,
+              selected: selected.includes(d.id),
+            })),
+            draftSaved: true,
+          });
+          warnUnsaved();
+        } else clearForm("publish", q.copy || "");
+      }
     } catch (e) {
       this.setData({ error: (e as Error).message });
     } finally {
       this.setData({ loading: false });
     }
   },
+  onUnload() {
+    clearUnsavedWarning();
+  },
+  remember() {
+    this.setData({
+      draftSaved: saveForm("publish", this.data.copyId, this.data),
+    });
+    warnUnsaved();
+  },
   input(e: WechatMiniprogram.Input) {
-    this.setData({ [e.currentTarget.dataset.field]: e.detail.value });
+    const field = e.currentTarget.dataset.field;
+    if (!["title", "estimatedPeople", "cutoffMinutes"].includes(field)) return;
+    this.setData({ [field]: e.detail.value });
+    this.remember();
   },
   date(e: WechatMiniprogram.PickerChange) {
     this.setData({ date: e.detail.value as string });
+    this.remember();
   },
   time(e: WechatMiniprogram.PickerChange) {
     this.setData({ time: e.detail.value as string });
+    this.remember();
   },
   select(e: WechatMiniprogram.CheckboxGroupChange) {
-    this.setData({ selected: e.detail.value });
+    const selected = e.detail.value;
+    this.setData({
+      selected,
+      dishes: this.data.dishes.map((d) => ({
+        ...d,
+        selected: selected.includes(d.id),
+      })),
+    });
+    this.remember();
   },
   async publish() {
     if (this.data.busy) return;
@@ -87,6 +143,8 @@ Page({
         scheduled_at: scheduled,
         cutoff_at: scheduled - minutes * 60000,
       });
+      clearForm("publish", this.data.copyId);
+      clearUnsavedWarning();
       chooseMeal(result.id);
       wx.switchTab({ url: "/pages/meal/index" });
     } catch (e) {

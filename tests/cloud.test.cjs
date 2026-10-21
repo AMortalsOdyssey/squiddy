@@ -36,6 +36,7 @@ function runtime(extra = {}) {
     ...makeRuntime({
       cloud,
       store,
+      maintenanceClock: extra.maintenanceClock,
       env: {
         SQUIDDY_APP_ID: APP,
         SQUIDDY_INVITE_KEY: "test-key-only-32-characters-long-xxxx",
@@ -47,6 +48,46 @@ function runtime(extra = {}) {
   };
 }
 const ctx = { APPID: APP, OPENID: "chef" };
+test("短时限维护任务轮转队列，繁忙清理队列不会饿死保留期清理", async () => {
+  let clock = 0;
+  const r = runtime({ maintenanceClock: () => (clock += 400) });
+  await r.store.transaction(async (tx) => {
+    for (let i = 0; i < 40; i++)
+      await tx.put("cleanup_jobs", String(i).padStart(3, "0"), {
+        status: "completed",
+      });
+    await tx.put("audit_events", "expired", { created_at: 0 });
+  });
+  for (let i = 0; i < 10; i++)
+    await r.maintenance({}, { SOURCE: "wx_trigger" });
+  assert.equal(r.store.snapshot().audit_events.expired, undefined);
+  assert.ok(r.store.snapshot().maintenance_state.cursors.last_completed_at > 0);
+});
+test("平台异常只保留私有诊断码，不记录输入或错误正文", async () => {
+  const r = runtime();
+  r.cloud.openapi.security.msgSecCheck = async () => {
+    throw {
+      errCode: -604101,
+      errMsg: "security.msgSecCheck: private-payload-and-identity",
+    };
+  };
+  const response = await r.handle(
+    "api",
+    {
+      action: "kitchen.create",
+      payload: { name: "私人厨房名字", request_id: "diagnostic-test" },
+    },
+    ctx,
+  );
+  assert.equal(response.error.code, "UNAVAILABLE");
+  const diagnostics = Object.values(r.store.snapshot().audit_events);
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].provider_code, "-604101");
+  assert.equal(diagnostics[0].operation, "security.msgSecCheck");
+  assert.ok(!JSON.stringify(diagnostics).includes("private-payload"));
+  assert.ok(!JSON.stringify(diagnostics).includes("私人厨房"));
+  assert.ok(!JSON.stringify(diagnostics).includes("chef"));
+});
 test("云入口只信SDK身份，公开入口不暴露通用业务动作", async () => {
   const r = runtime();
   assert.equal(
@@ -272,6 +313,19 @@ test("注销即时移除索引、成员数、厨师可见的个人备注", async
 });
 test("SDK兼容导入和原型污染防护", () => {
   for (const name of ["api", "publicRead", "platformCallback", "maintenance"]) {
+    for (const dependency of ["lodash.set", "lodash.unset"]) {
+      const installed = require("node:path").join(
+        __dirname,
+        "../cloudfunctions",
+        name,
+        "node_modules",
+        dependency,
+      );
+      assert.ok(
+        require("node:fs").lstatSync(installed).isDirectory(),
+        "Cloud deployment must not depend on npm directory symlinks",
+      );
+    }
     const sdk = require(
       "../cloudfunctions/" + name + "/node_modules/wx-server-sdk",
     );

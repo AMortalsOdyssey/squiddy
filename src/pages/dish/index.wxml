@@ -1,0 +1,13 @@
+<view class="page with-dock dish-detail">
+  <view wx:if="{{loading}}" class="empty">正在翻开这道菜…</view>
+  <view wx:elif="{{error}}" class="card"><view>{{error}}</view><button class="secondary" bindtap="back">返回菜单</button></view>
+  <block wx:elif="{{dish}}">
+    <image wx:if="{{dish.image_url}}" class="recipe-cover" src="{{dish.image_url}}" mode="aspectFill" bindtap="preview"/>
+    <view wx:else class="recipe-cover recipe-placeholder"><view class="recipe-initial">{{dish.name[0]}}</view><view class="recipe-caption">厨房里的熟悉味道</view></view>
+    <view class="recipe-heading"><view class="eyebrow">{{dish.category_name}} · 一道拿手菜</view><view class="title">{{dish.name}}</view><view class="recipe-tags"><text class="tag">约 {{dish.minutes}} 分钟</text><text class="tag">一份供 {{dish.default_serves}} 人分享</text><text class="tag">{{dish.spicy?'有辣味':'不辣'}}</text><text wx:if="{{dish.vegetarian}}" class="tag">素食</text></view></view>
+    <view class="card"><view class="section-title">准备这些食材</view><view wx:if="{{!dish.ingredients.length}}" class="muted">厨师还没写下食材，点菜前可以先问问。</view><view class="ingredient" wx:for="{{dish.ingredients}}" wx:key="index"><text class="ingredient-dot">·</text><text>{{item}}</text></view><view class="allergy"><view class="allergy-title">过敏与忌口提醒</view><view>{{dish.allergens.length?dish.allergens.join('、'):'暂无单独标记的过敏原'}}</view><view class="muted">{{dish.ingredient_complete?'厨师已标记食材与调味料完整。':'食材信息可能不完整。'}}过敏者请与厨师确认交叉接触风险。</view></view></view>
+    <view class="card"><view class="section-title">跟着这样做</view><view wx:if="{{!steps.length}}" class="muted">这道菜的小诀窍，等厨师下次补上。</view><view class="recipe-step" wx:for="{{steps}}" wx:key="index"><text class="step-number">{{index+1}}</text><text class="flex">{{item}}</text></view></view>
+    <view class="muted recipe-footer">好吃的秘诀，也许只是一起吃饭的人。</view>
+  </block>
+</view>
+<view wx:if="{{dish&&!loading}}" class="action-dock"><view wx:if="{{canOrder}}" class="step"><button aria-label="减少份数" data-delta="-1" bindtap="change" disabled="{{quantity===0}}">−</button><text>{{quantity}}</text><button aria-label="增加份数" data-delta="1" bindtap="change" disabled="{{quantity===20}}">＋</button></view><button wx:if="{{meal}}" class="primary" bindtap="review">{{canOrder?'看看我的选择':'查看饭局进度'}}</button><button wx:else class="primary" bindtap="back">返回菜单</button></view>

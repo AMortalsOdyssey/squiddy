@@ -1,0 +1,50 @@
+.kitchen-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx;
+  background: #fffefa;
+  border-radius: 18rpx;
+  font-size: 27rpx;
+}
+.history-summary {
+  display: flex;
+  gap: 80rpx;
+  padding: 32rpx 8rpx;
+}
+.history-number {
+  font-size: 56rpx;
+  line-height: 1.2;
+  font-weight: 600;
+  color: #244b3b;
+  margin-bottom: 8rpx;
+}
+.history-summary .muted {
+  font-size: 23rpx;
+}
+.history-search {
+  height: 88rpx;
+  background: #fffefa;
+  padding: 0 24rpx;
+  border-radius: 18rpx;
+  font-size: 26rpx;
+}
+.history-card {
+  background: #fffefa;
+  border-radius: 24rpx;
+  padding: 28rpx;
+  margin: 20rpx 0;
+}
+.history-date {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 20rpx;
+  margin-bottom: 20rpx;
+  border-bottom: 1rpx solid rgba(36, 75, 59, 0.08);
+  font-size: 23rpx;
+  color: rgba(36, 51, 43, 0.62);
+}
+.history-card .dish-name {
+  margin-bottom: 8rpx;
+}

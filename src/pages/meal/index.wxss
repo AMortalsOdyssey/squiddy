@@ -1,29 +1,244 @@
-.deadline {
+.meal-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: -12rpx;
+}
+.meal-topline .eyebrow {
+  margin: 0;
+}
+.meal-heading {
+  background: #fffefa;
+  border-radius: 28rpx;
+  padding: 28rpx;
+  margin: 12rpx 0 24rpx;
+}
+.meal-heading .title {
+  font-size: 44rpx;
+  margin: 20rpx 0 12rpx;
+}
+.meal-schedule {
+  font-size: 28rpx;
+  font-weight: 500;
+  margin-bottom: 4rpx;
+}
+.stage-tip {
+  color: rgba(36, 51, 43, 0.65);
+  font-size: 25rpx;
   margin-top: 20rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid rgba(36, 75, 59, 0.08);
 }
-.request {
-  padding: 20rpx 0;
-  border-bottom: 1rpx solid rgba(36, 75, 59, 0.08);
+.progress-track {
+  height: 8rpx;
+  background: rgba(36, 75, 59, 0.08);
+  border-radius: 8rpx;
+  overflow: hidden;
+  margin-top: 24rpx;
 }
-.request:last-child {
+.progress-fill {
+  height: 100%;
+  background: #244b3b;
+  border-radius: 8rpx;
+  transition: width 0.2s ease;
+}
+.progress-caption {
+  font-size: 22rpx;
+  color: rgba(36, 51, 43, 0.6);
+  margin-top: 10rpx;
+}
+.selection-list {
+  padding: 4rpx 24rpx;
+}
+.selection-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 12rpx 0;
+  min-height: 112rpx;
+  border-bottom: 1rpx solid rgba(36, 75, 59, 0.07);
+}
+.selection-row:last-child {
   border-bottom: 0;
 }
-.portion-input {
-  width: 120rpx;
-  background: #f6f3eb;
-  padding: 16rpx;
-  text-align: center;
-  border-radius: 16rpx;
+.portion-label {
+  font-size: 27rpx;
+  white-space: nowrap;
 }
-.quote-total {
+.remove-selection {
+  width: 88rpx;
+  min-width: 88rpx;
+  padding: 0;
+  background: transparent;
+  color: rgba(36, 51, 43, 0.5);
+  font-size: 36rpx;
+  margin: 0 -16rpx 0 0;
+}
+.privacy-hint {
+  font-size: 22rpx;
+  color: rgba(36, 51, 43, 0.5);
+}
+.selection-explainer {
+  padding: 0 8rpx 24rpx;
+  font-size: 23rpx;
+}
+.readonly-note {
+  padding: 16rpx 0 24rpx;
+}
+.kitchen-metrics {
+  display: flex;
+  justify-content: space-between;
+  padding: 12rpx 8rpx 28rpx;
+  gap: 12rpx;
+}
+.kitchen-metrics > view {
+  flex: 1;
+  font-size: 22rpx;
+  color: rgba(36, 51, 43, 0.6);
+}
+.metric-number {
   font-size: 48rpx;
+  color: #244b3b;
+  line-height: 1.25;
+  display: block;
+  margin-bottom: 8rpx;
   font-weight: 600;
+}
+.quick-actions {
+  margin-bottom: 28rpx;
+}
+.quick-actions .secondary {
+  font-size: 25rpx;
+}
+.invite-ready {
+  border: 1rpx solid rgba(36, 75, 59, 0.12);
+}
+.request {
+  padding: 24rpx 0;
+  border-bottom: 1rpx solid rgba(36, 75, 59, 0.08);
+}
+.request:first-child {
+  padding-top: 0;
+}
+.request:last-child {
+  border: 0;
+  padding-bottom: 0;
+}
+.request-note {
+  background: rgba(36, 75, 59, 0.05);
+  padding: 18rpx;
+  border-radius: 12rpx;
+  font-size: 25rpx;
+  margin-top: 16rpx;
+}
+.summary-card {
+  background: #fffefa;
+  border-radius: 20rpx;
+  padding: 24rpx;
+  margin: 16rpx 0;
+}
+.summary-card .row {
+  margin-top: 12rpx;
+}
+.requested-count {
+  font-size: 26rpx;
   color: #244b3b;
 }
-.status-line {
-  margin-top: 16rpx;
-  color: #657168;
+.under-button {
+  text-align: center;
+  font-size: 22rpx;
+  padding: 16rpx 0;
 }
-.title {
+.plan-card {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  background: #fffefa;
+  border-radius: 22rpx;
+  padding: 28rpx;
+  margin: 20rpx 0;
+}
+.plan-quantity {
+  flex-shrink: 0;
+  text-align: center;
+}
+.plan-quantity .muted {
+  font-size: 20rpx;
+  margin-top: 8rpx;
+  display: block;
+}
+.quote-section {
+  padding: 28rpx;
+  background: rgba(36, 75, 59, 0.05);
+  border-radius: 24rpx;
+  margin-top: 40rpx;
+}
+.quote-toggle {
+  width: 100%;
+  margin: 0;
+  padding: 0 0 16rpx;
+  text-align: left;
+  justify-content: space-between;
+  background: transparent;
+  color: #244b3b;
+  font-size: 24rpx;
+}
+.quote-label {
+  font-size: 24rpx;
+  color: rgba(36, 51, 43, 0.65);
+}
+.quote-total {
   font-size: 44rpx;
+  font-weight: 600;
+  margin-top: 8rpx;
+}
+.quote-section > .muted {
+  font-size: 22rpx;
+}
+.quote-section .note {
+  margin: 24rpx 0 0;
+}
+.price-row {
+  margin-top: 24rpx;
+  padding-top: 24rpx;
+  border-top: 1rpx solid rgba(36, 75, 59, 0.1);
+  font-size: 27rpx;
+}
+.picker-action {
+  display: flex;
+  justify-content: space-between;
+  color: #244b3b;
+  background: rgba(36, 75, 59, 0.06);
+  padding: 24rpx;
+  border-radius: 16rpx;
+  margin-top: 24rpx;
+}
+.progress-card {
+  background: #fffefa;
+  padding: 28rpx;
+  border-radius: 24rpx;
+  margin: 20rpx 0;
+}
+.item-status {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  font-size: 25rpx;
+  color: rgba(36, 51, 43, 0.6);
+  margin: 16rpx 0;
+}
+.status-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: currentColor;
+}
+.status-cooking {
+  color: #be6345;
+}
+.status-served {
+  color: #244b3b;
+}
+.progress-actions {
+  margin-top: 24rpx;
 }

@@ -94,7 +94,7 @@ export function failure(error: unknown) {
     duration: 3500,
   });
 }
-function scope() {
+export function scope() {
   return isLocal ? require("./local").actor() : "wechat";
 }
 export function currentKitchen(): string {
@@ -118,9 +118,7 @@ export const meal = (id = currentMeal()) =>
 export function draftKey(id: string) {
   return "squiddy-draft-v2-" + scope() + "-" + id;
 }
-function normalizeSelection(
-  v: any,
-): {
+function normalizeSelection(v: any): {
   items: { dish_id: string; quantity: number }[];
   note: string;
   people: number;

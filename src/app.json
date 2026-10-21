@@ -9,7 +9,9 @@
     "pages/recommend/index",
     "pages/invite/index",
     "pages/settings/index",
-    "pages/poster/index"
+    "pages/poster/index",
+    "pages/dish/index",
+    "pages/history/index"
   ],
   "window": {
     "navigationBarTitleText": "鱿鱼须须",
@@ -24,15 +26,21 @@
     "list": [
       {
         "pagePath": "pages/menu/index",
-        "text": "菜单"
+        "text": "菜单",
+        "iconPath": "assets/icons/menu.png",
+        "selectedIconPath": "assets/icons/menu-active.png"
       },
       {
         "pagePath": "pages/meal/index",
-        "text": "饭局"
+        "text": "饭局",
+        "iconPath": "assets/icons/meal.png",
+        "selectedIconPath": "assets/icons/meal-active.png"
       },
       {
         "pagePath": "pages/me/index",
-        "text": "我的"
+        "text": "我的",
+        "iconPath": "assets/icons/me.png",
+        "selectedIconPath": "assets/icons/me-active.png"
       }
     ]
   },
