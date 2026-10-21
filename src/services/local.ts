@@ -104,7 +104,7 @@ export async function localCleanup() {
   const { cleanupBatch } = require("../domain/maintenance");
   for (let i = 0; i < 40; i++) {
     await drainLocalFiles();
-    const result = await cleanupBatch(store, uid);
+    const result = await cleanupBatch(store, uid, { hash });
     if (result.status === "completed") return result;
   }
   return { status: "running" };
@@ -117,7 +117,7 @@ export async function localMaintenance() {
   for (const id of Object.keys(snapshot.cleanup_jobs || {}))
     for (let i = 0; i < 80; i++) {
       await drainLocalFiles();
-      const result = await cleanupBatch(store, id);
+      const result = await cleanupBatch(store, id, { hash });
       if (result.status === "completed") break;
     }
   return { done: true };

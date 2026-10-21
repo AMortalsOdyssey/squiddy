@@ -6,7 +6,9 @@ import {
   chooseKitchen,
   clearMediaFiles,
 } from "../../services/api";
+import { clearLocalBackups } from "../../services/backup";
 Page({
+  _visible: true,
   data: {
     local: isLocal,
     busy: false,
@@ -16,17 +18,63 @@ Page({
     feedbackId: "",
     exportText: "",
     deletionStatus: "",
+    feedbackItems: [] as any[],
+    feedbackLookup: "",
     privacy:
-      "我们使用微信提供的小程序身份识别你，保存昵称、厨房成员关系、菜谱和饭局选择。点菜备注和饭后反馈只给本人和本餐接单厨师查看；购物清单、采购备注和认领昵称对同餐成员可见；内部参考价只给有权限的厨师查看，不用于收款。选择图片时才访问相机或相册，上传内容须经平台审核。订阅消息须由你主动同意，拒绝不影响点菜。公开摘要仅包含你确认公开的饭局标题和菜名。你可以导出可访问的数据、离开厨房，并在转让或关闭自己管理的厨房后注销账号。注销立即停用账号，后台分批删除个人记录；共享厨房菜谱与饭局记录按厨房的生命周期保留，不再展示已注销成员的个人选择与饭后反馈，并清除采购认领身份。",
+      "我们使用微信提供的小程序身份识别你，保存昵称、厨房成员关系、菜谱和饭局选择。点菜备注和饭后反馈只给本人和本餐接单厨师查看；购物清单、采购备注和认领昵称对同餐成员可见；内部参考价只给有权限的厨师查看，不用于收款。选择图片时才访问相机或相册，上传内容须经平台审核。订阅消息须由你主动同意，拒绝不影响点菜。公开摘要仅包含你确认公开的饭局标题和菜名。你可以导出可访问的数据、离开厨房，并在转让或关闭自己管理的厨房后注销账号。注销立即停用账号，后台分批删除个人记录；共享厨房菜谱、仍被引用的图片与饭局记录按厨房的生命周期保留，上传者身份会清除；主动保存的备份副本不随注销撤回。不再展示已注销成员的个人选择与饭后反馈，并清除采购认领身份。",
   },
   async onShow() {
+    this._visible = true;
     await this.status();
+    await this.loadFeedback();
   },
   onHide() {
-    this.setData({ exportText: "", exportPath: "" });
+    this._visible = false;
+    this.setData({ exportText: "", exportPath: "", feedbackItems: [] });
   },
   togglePrivacy() {
     this.setData({ privacyExpanded: !this.data.privacyExpanded });
+  },
+  backup() {
+    wx.navigateTo({ url: "/pages/backup/index" });
+  },
+  async loadFeedback() {
+    if (!this._visible) return;
+    try {
+      const r = await call("feedback.read");
+      if (this._visible) this.setData({ feedbackItems: r.items });
+    } catch (e) {
+      if ((e as any).code !== "ACCOUNT_DELETED") failure(e);
+    }
+  },
+  feedbackLookup(e: WechatMiniprogram.Input) {
+    this.setData({ feedbackLookup: e.detail.value });
+  },
+  async findFeedback() {
+    if (!this.data.feedbackLookup.trim()) return;
+    try {
+      const r = await call("feedback.read", {
+        feedback_id: this.data.feedbackLookup.trim(),
+      });
+      if (this._visible) this.setData({ feedbackItems: r.items });
+      if (!r.items.length)
+        wx.showToast({ title: "没有这个反馈或无权查看", icon: "none" });
+    } catch (e) {
+      failure(e);
+    }
+  },
+  async favoriteExport() {
+    if (!this.data.exportPath) return;
+    try {
+      if (typeof wx.addFileToFavorites !== "function")
+        throw Error("当前微信不支持直接收藏，可发送给自己后收藏");
+      await wx.addFileToFavorites({
+        filePath: this.data.exportPath,
+        fileName: "鱿鱼须须-我的数据.json",
+      });
+    } catch (e) {
+      if (!(e as any).errMsg?.includes("cancel")) failure(e);
+    }
   },
   async shareExport() {
     if (!this.data.exportPath) return;
@@ -90,6 +138,7 @@ Page({
         message: this.data.feedback,
       });
       this.setData({ feedbackId: r.id, feedback: "" });
+      await this.loadFeedback();
       wx.showToast({ title: isLocal ? "演练反馈已记录" : "反馈已记录" });
     } catch (e) {
       failure(e);
@@ -114,6 +163,7 @@ Page({
     try {
       await mutate("account.delete");
       clearMediaFiles();
+      clearLocalBackups();
       chooseKitchen("");
       const keys = wx.getStorageInfoSync().keys;
       const actor = isLocal

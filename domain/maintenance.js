@@ -1,5 +1,8 @@
 "use strict";
 const { ensure, input, id } = require("./errors");
+const { referencedByKitchen } = require("./media");
+const { clearActor } = require("./meal-tools");
+const { sha256 } = require("../shared/hash");
 const tables = [
   "feedback",
   "transition_audits",
@@ -20,6 +23,7 @@ const tables = [
   "meals",
   "receipts",
   "audit_events",
+  "users",
 ];
 async function publicRead(store, shareId, now = Date.now()) {
   id(shareId);
@@ -78,7 +82,7 @@ async function applyMediaResult(store, event, expectedAppId) {
 async function cleanupBatch(
   store,
   jobId,
-  { removeFile = async () => {}, batchSize = 20 } = {},
+  { removeFile = async () => {}, batchSize = 20, hash = sha256 } = {},
 ) {
   input(Number.isInteger(batchSize) && batchSize > 0 && batchSize <= 50);
   return store.transaction(async (tx) => {
@@ -100,23 +104,115 @@ async function cleanupBatch(
           status: "completed",
           completed_at: Date.now(),
         });
-      } else await tx.remove("kitchens", job.kitchen_id);
+      } else if (job.kind === "kitchen")
+        await tx.remove("kitchens", job.kitchen_id);
       job.status = "completed";
       await tx.put("cleanup_jobs", jobId, job);
       return job;
     }
     const rows = await tx.scan(table, batchSize, job.cursor);
     for (const { id: rowId, data: r } of rows) {
+      if (table === "users" && job.kind === "kitchen") {
+        if (r.kitchen_ids?.includes(job.kitchen_id)) {
+          r.kitchen_ids = r.kitchen_ids.filter((id) => id !== job.kitchen_id);
+          await tx.put("users", rowId, r);
+        }
+        job.cursor = rowId;
+        continue;
+      }
+      if (
+        table === "meals" &&
+        ["account", "member"].includes(job.kind) &&
+        (job.kind === "account" || r.kitchen_id === job.kitchen_id) &&
+        r.participant_ids?.includes(job.actor)
+      ) {
+        const part =
+          job.kind === "member"
+            ? await tx.get(
+                "meal_memberships",
+                hash("participant:" + rowId + ":" + job.actor),
+              )
+            : null;
+        if (
+          job.kind === "account" ||
+          (part?.membership_epoch || 0) < (job.membership_epoch || 1)
+        ) {
+          clearActor(r, job.actor);
+          r.participant_ids = r.participant_ids.filter((a) => a !== job.actor);
+          r.revision++;
+          await tx.put("meals", rowId, r);
+        }
+      }
+      let memberScope = false;
+      if (job.kind === "member") {
+        if (r.kitchen_id) memberScope = r.kitchen_id === job.kitchen_id;
+        else if (r.meal_id)
+          memberScope =
+            (await tx.get("meals", r.meal_id))?.kitchen_id === job.kitchen_id;
+        let generation = r.membership_epoch || 0;
+        if (r.meal_id)
+          generation =
+            (
+              await tx.get(
+                "meal_memberships",
+                hash("participant:" + r.meal_id + ":" + job.actor),
+              )
+            )?.membership_epoch || 0;
+        else if (r.media_id)
+          generation =
+            (await tx.get("media", r.media_id))?.membership_epoch || 0;
+        if (generation >= (job.membership_epoch || 1)) memberScope = false;
+      }
       const belongs =
-        job.kind === "account"
-          ? r.actor === job.actor ||
-            r.user_id === job.actor ||
-            r.creator === job.actor
+        job.kind === "account" || job.kind === "member"
+          ? (job.kind !== "member" || memberScope) &&
+            (r.actor === job.actor ||
+              r.user_id === job.actor ||
+              r.creator === job.actor)
           : r.kitchen_id === job.kitchen_id ||
             job.meal_ids.includes(r.meal_id) ||
             job.dish_ids.includes(rowId) ||
             job.meal_ids.includes(rowId);
       if (belongs) {
+        if (
+          job.kind === "member" &&
+          ["memberships", "meal_memberships"].includes(table)
+        ) {
+          if (table === "meal_memberships") {
+            r.status = "revoked";
+            await tx.put(table, rowId, r);
+          }
+          job.cursor = rowId;
+          continue;
+        }
+        if (
+          ["account", "member"].includes(job.kind) &&
+          table === "media" &&
+          (await referencedByKitchen(
+            tx,
+            rowId,
+            await tx.get("kitchens", r.kitchen_id),
+            r,
+          ))
+        ) {
+          // Recipes belong to the shared kitchen. Erase the uploader identity,
+          // retain referenced bytes, and never leave a recipe pointing at a deleted file.
+          delete r.actor;
+          delete r.upload_request;
+          r.owner_scope = "kitchen";
+          await tx.put("media", rowId, r);
+          const queued = await tx.get("file_deletions", rowId);
+          if (queued?.file_id === r.file_id)
+            await tx.remove("file_deletions", rowId);
+          const trace =
+            r.trace_id && (await tx.get("media_traces", r.trace_id));
+          if (trace) {
+            delete trace.actor;
+            await tx.put("media_traces", r.trace_id, trace);
+          }
+          job.cursor = rowId;
+          continue;
+        }
         if (table === "media" && r.file_id) {
           job.file_ids ||= [];
           if (!job.file_ids.includes(rowId)) job.file_ids.push(rowId);
@@ -134,7 +230,8 @@ async function cleanupBatch(
         }
         await tx.remove(table, rowId);
       } else if (
-        job.kind === "account" &&
+        ["account", "member"].includes(job.kind) &&
+        (job.kind !== "member" || memberScope) &&
         table === "invitations" &&
         r.accepted?.includes(job.actor)
       ) {
@@ -148,6 +245,7 @@ async function cleanupBatch(
       job.cursor = "";
     }
     job.status = "running";
+    job.last_progress_at = Date.now();
     await tx.put("cleanup_jobs", jobId, job);
     return {
       status: job.status,
@@ -159,7 +257,7 @@ async function cleanupBatch(
 async function processNotification(
   store,
   jobId,
-  { send, template, now = () => Date.now() },
+  { send, template, now = () => Date.now(), hash },
 ) {
   const prepared = await store.transaction(async (tx) => {
     const job = await tx.get("notification_jobs", jobId);
@@ -167,6 +265,20 @@ async function processNotification(
     const preference = await tx.get("notification_preferences", jobId);
     const user = await tx.get("users", job.actor),
       meal = await tx.get("meals", job.meal_id);
+    const membership =
+      hash && meal
+        ? await tx.get(
+            "memberships",
+            hash("member:" + meal.kitchen_id + ":" + job.actor),
+          )
+        : null;
+    const participant =
+      hash && meal
+        ? await tx.get(
+            "meal_memberships",
+            hash("participant:" + meal.id + ":" + job.actor),
+          )
+        : null;
     if (!template) {
       job.status = "not_configured";
       await tx.put("notification_jobs", jobId, job);
@@ -176,6 +288,10 @@ async function processNotification(
       user?.status !== "active" ||
       preference?.accepted !== true ||
       !meal ||
+      (hash && membership?.status !== "active") ||
+      (hash &&
+        (participant?.status !== "active" ||
+          (participant.membership_epoch || 0) !== (membership?.epoch || 0))) ||
       meal.status !== "completed" ||
       !meal.participant_ids.includes(job.actor)
     ) {

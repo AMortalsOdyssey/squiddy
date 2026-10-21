@@ -2,6 +2,8 @@ node_modules/
 miniprogram/
 project.private.config.json
 config/local.json
+config/*.local.json
+config/backup.key
 .env
 .env.*
 !.env.example

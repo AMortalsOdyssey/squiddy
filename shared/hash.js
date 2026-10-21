@@ -23,6 +23,10 @@ function sha256(value) {
       i += 2;
     } else bytes.push(encoded.charCodeAt(i));
   }
+  return sha256Bytes(bytes);
+}
+function sha256Bytes(value) {
+  const bytes = Array.from(value);
   const length = bytes.length * 8;
   bytes.push(0x80);
   while (bytes.length % 64 !== 56) bytes.push(0);
@@ -87,4 +91,4 @@ function sha256(value) {
   }
   return h.map((n) => (n >>> 0).toString(16).padStart(8, "0")).join("");
 }
-module.exports = { sha256 };
+module.exports = { sha256, sha256Bytes };

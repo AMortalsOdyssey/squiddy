@@ -4,7 +4,7 @@ const limits = Object.freeze({
   kitchens: 5,
   members: 30,
   dishes: 80,
-  meals: 40,
+  active_meals: 40,
   menu: 30,
   selection_lines: 60,
   meal_lines: 80,

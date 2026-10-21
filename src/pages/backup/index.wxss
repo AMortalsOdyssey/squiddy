@@ -1,0 +1,1 @@
+.backup-page .muted{line-height:1.65}.file-name{font-size:24rpx;word-break:break-all;margin-bottom:12rpx}.backup-preview{font-size:26rpx;font-weight:600;margin:18rpx 0 8rpx}.error-note{color:#a44832;white-space:pre-wrap}.history-record{border-top:1rpx solid rgba(36,75,59,.1);padding-top:16rpx;margin-top:16rpx}.compact .row{gap:12rpx}.compact .row button{flex:1}

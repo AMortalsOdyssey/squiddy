@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const { cloudStore } = require("./store");
 const { AppError, ensure, input, keys } = require("../domain/errors");
 const { createService } = require("../domain/service");
+const { referencedByKitchen } = require("../domain/media");
 const {
   publicRead,
   applyMediaResult,
@@ -397,7 +398,7 @@ function makeRuntime({
     }
     await batch("cleanup_jobs", async (id, data) => {
       if (data.status !== "completed")
-        await cleanupBatch(store, id, { batchSize: 5 });
+        await cleanupBatch(store, id, { batchSize: 5, hash: crypt.hash });
     });
     await batch("media_callbacks", async (id, data) => {
       const result = await applyMediaResult(store, data.event, appid);
@@ -471,6 +472,7 @@ function makeRuntime({
         return;
       }
       await processNotification(store, id, {
+        hash: crypt.hash,
         template: notificationConfig,
         send: async (job) => {
           const r = await cloud.openapi.subscribeMessage.send({
@@ -495,31 +497,7 @@ function makeRuntime({
         const image = await tx.get("media", id);
         if (!image) return;
         const k = await tx.get("kitchens", image.kitchen_id);
-        let referenced = k?.image_id === id;
-        for (const did of k?.dish_ids || []) {
-          const d = await tx.get("dishes", did);
-          if (
-            d?.image_id === id ||
-            d?.recipe_steps?.some((s) => s.image_id === id)
-          ) {
-            referenced = true;
-            break;
-          }
-        }
-        if (!referenced)
-          for (const mid of k?.meal_ids || []) {
-            const m = await tx.get("meals", mid);
-            if (
-              m?.menu.some(
-                (d) =>
-                  d.image_id === id ||
-                  d.recipe_steps?.some((s) => s.image_id === id),
-              )
-            ) {
-              referenced = true;
-              break;
-            }
-          }
+        const referenced = await referencedByKitchen(tx, id, k, image);
         if (!referenced) {
           if (image.file_id)
             await tx.put("file_deletions", id, {
@@ -563,7 +541,13 @@ function makeRuntime({
         // A media reference check has several transactional reads/writes. Do not
         // start it at the tail of a 3s invocation and repeatedly lose its commit.
         const reserve =
-          table === "media" ? 1400 : table === "file_deletions" ? 900 : 0;
+          table === "media"
+            ? 1400
+            : table === "file_deletions"
+              ? 900
+              : table === "cleanup_jobs" && data.status !== "completed"
+                ? 1200
+                : 0;
         if (maintenanceClock() + reserve >= deadline) {
           deferred = true;
           break;

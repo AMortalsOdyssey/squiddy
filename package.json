@@ -1,6 +1,6 @@
 {
   "name": "squiddy",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -10,7 +10,10 @@
     "check": "npm run typecheck && npm run build && npm test && npm run doctor",
     "setup:cloud": "node scripts/install-cloud.mjs",
     "prepare:cloud": "npm run build && node scripts/prepare-cloud.mjs",
-    "audit:all": "node scripts/audit.mjs"
+    "audit:all": "node scripts/audit.mjs",
+    "backup:run": "node scripts/backup-run.cjs run",
+    "backup:status": "node scripts/backup-run.cjs status",
+    "health:cloud": "node scripts/health.cjs"
   },
   "devDependencies": {
     "miniprogram-api-typings": "5.2.3",

@@ -9,6 +9,7 @@ const {
   integer,
 } = require("./errors");
 const { lineKey, lineLabel } = require("../shared/selection");
+const { activePeople, activeParticipants } = require("./people");
 const reviewTags = [
   "下次还想吃",
   "刚刚好",
@@ -51,8 +52,12 @@ function clearActor(m, actor) {
 async function shoppingView(m, actor, tx, hash) {
   const s = m.shopping || { revision: 0, items: [], signature: "" };
   const names = new Map();
-  for (const a of new Set(s.items.map((i) => i.claimed_by).filter(Boolean)))
-    names.set(a, (await tx.get("users", a))?.name || "厨房朋友");
+  const visible = hash ? await activeParticipants(tx, m, hash) : null;
+  for (const a of new Set(s.items.map((i) => i.claimed_by).filter(Boolean))) {
+    if (visible && !visible.actors.includes(a)) continue;
+    const user = visible ? visible.people.get(a) : await tx.get("users", a);
+    if (user?.status === "active") names.set(a, user.name || "厨房朋友");
+  }
   return {
     revision: s.revision,
     can_change: m.status !== "cancelled" && m.final_status !== "cancelled",
@@ -88,7 +93,7 @@ async function shoppingView(m, actor, tx, hash) {
     })),
   };
 }
-async function reviewView(m, actor, tx, offset = 0) {
+async function reviewView(m, actor, tx, offset = 0, hash) {
   const served = m.items
     .filter((i) => i.status === "served")
     .map((i) => ({
@@ -110,12 +115,24 @@ async function reviewView(m, actor, tx, offset = 0) {
     items: [],
   };
   const feedback = [];
-  const submitted = entries.filter(([a]) => m.participant_ids.includes(a));
+  const visible = hash ? await activeParticipants(tx, m, hash) : null;
+  const people =
+    visible?.people ||
+    (await activePeople(
+      tx,
+      m.kitchen_id,
+      entries.map(([a]) => a),
+    ));
+  const submitted = entries.filter(([a]) =>
+    visible
+      ? visible.actors.includes(a)
+      : m.participant_ids.includes(a) && people.has(a),
+  );
   if (m.cook_id === actor)
     for (const [a, r] of submitted.slice(offset, offset + 5)) {
       if (!m.participant_ids.includes(a)) continue;
       feedback.push({
-        name: (await tx.get("users", a))?.name || "厨房朋友",
+        name: people.get(a)?.name || "厨房朋友",
         note: r.note,
         items: r.items
           .filter((i) => served.some((d) => d.line_id === i.line_id))
@@ -149,11 +166,11 @@ async function handleTool(action, p, { m, actor, tx, now, newId, hash }) {
       p.feedback_offset === undefined
         ? 0
         : integer(p.feedback_offset, 0, 30, "反馈页码");
-    return reviewView(m, actor, tx, offset);
+    return reviewView(m, actor, tx, offset, hash);
   }
   if (action === "meal.review.save") {
     keys(p, ["meal_id", "request_id", "expected_revision", "note", "items"]);
-    const view = await reviewView(m, actor, tx);
+    const view = await reviewView(m, actor, tx, 0, hash);
     ensure(
       view.available,
       "INVALID_STATE",
@@ -315,6 +332,11 @@ async function handleTool(action, p, { m, actor, tx, now, newId, hash }) {
         "claimed",
       ]);
       input(typeof p.claimed === "boolean");
+      if (
+        i.claimed_by &&
+        !(await activeParticipants(tx, m, hash)).actors.includes(i.claimed_by)
+      )
+        i.claimed_by = "";
       ensure(
         !i.claimed_by || i.claimed_by === actor || (cook && !p.claimed),
         "CONFLICT",

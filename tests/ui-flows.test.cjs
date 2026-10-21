@@ -30,6 +30,22 @@ global.wx = {
       success();
     },
     unlinkSync: (p) => files.delete(p),
+    readFile: ({ filePath, success, fail }) => {
+      if (!files.has(filePath)) {
+        fail({ errMsg: "file does not exist" });
+        return;
+      }
+      const v = files.get(filePath),
+        b = typeof v === "string" ? Buffer.from(v) : Buffer.from(v);
+      success({
+        data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength),
+      });
+    },
+    copyFileSync: (from, to) => {
+      if (!files.has(from)) throw Error("Missing source file");
+      files.set(to, files.get(from));
+    },
+    readdirSync: () => [...files.keys()].map((p) => p.split("/").at(-1)),
   }),
 };
 function page(name) {
@@ -451,4 +467,88 @@ test("离开购物或反馈页面后，较晚返回的请求不能重新填回�
   } finally {
     api.call = original;
   }
+});
+
+test("完整备份页执行ZIP导出与校验、调用收藏界面、恢复到新厨房且重复继续不复制", async () => {
+  local.selectActor("chef");
+  const source = api.currentKitchen();
+  const before = await api.kitchen(source);
+  const backup = page("backup");
+  backup.setData({ includeImages: false });
+  await backup.create();
+  assert.equal(backup.data.error, "");
+  assert.ok(backup.data.files.length > 0);
+  const file = backup.data.files.at(-1);
+  let favorite;
+  wx.addFileToFavorites = async (r) => {
+    favorite = r;
+  };
+  await backup.favorite(event({ index: backup.data.files.length - 1 }));
+  assert.equal(favorite.filePath, file.path);
+  wx.chooseMessageFile = async () => ({
+    tempFiles: [{ path: file.path, size: file.size }],
+  });
+  await backup.select();
+  assert.equal(backup.data.error, "");
+  await backup.restore();
+  assert.equal(backup.data.error, "");
+  const newKitchen = backup.data.restoredKitchen;
+  assert.notEqual(newKitchen, source);
+  const restored = await api.kitchen(newKitchen);
+  assert.equal(restored.dishes.length, before.dishes.length);
+  assert.equal(restored.meals.length, 0);
+  await backup.restore();
+  assert.equal(
+    (await api.kitchen(newKitchen)).dishes.length,
+    before.dishes.length,
+  );
+  assert.equal((await api.kitchen(source)).dishes.length, before.dishes.length);
+  api.chooseKitchen(source);
+});
+
+test("备份图片的实际文件字节往返，恢复重新上传并绑定新厨房图片", async () => {
+  local.selectActor("chef");
+  const kid = api.currentKitchen(),
+    k = await api.kitchen(kid),
+    d = k.dishes[0];
+  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]);
+  const imagePath = "/local-test-only/source-photo.jpg";
+  files.set(
+    imagePath,
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+  );
+  const image = await api.mutate("media.prepare", { kitchen_id: kid });
+  await api.completeMedia({ media_id: image.id, local_path: imagePath });
+  await api.mutate("dish.save", {
+    kitchen_id: kid,
+    dish_id: d.id,
+    expected_revision: d.revision,
+    name: d.name,
+    category: d.category,
+    category_id: d.category_id,
+    ingredients: d.ingredients,
+    allergens: d.allergens,
+    steps: d.steps,
+    minutes: d.minutes,
+    image_id: image.id,
+    default_serves: d.default_serves,
+  });
+  const backup = page("backup");
+  await backup.create();
+  assert.equal(backup.data.error, "");
+  const file = backup.data.files.at(-1);
+  wx.chooseMessageFile = async () => ({
+    tempFiles: [{ path: file.path, size: file.size }],
+  });
+  await backup.select();
+  assert.ok(backup.data.preview.photos > 0);
+  await backup.restore();
+  assert.equal(backup.data.error, "");
+  const recovered = await api.kitchen(backup.data.restoredKitchen);
+  const dish = recovered.dishes.find((x) => x.name === d.name);
+  assert.ok(dish.image_id);
+  assert.notEqual(dish.image_id, image.id);
+  const stored = await api.call("media.read", { media_id: dish.image_id });
+  assert.deepEqual(Buffer.from(files.get(stored.file_id)), bytes);
+  api.chooseKitchen(kid);
 });

@@ -12,6 +12,11 @@ const {
 const { dishView, mealSummary, quoteView, categoryNames } = require("./views");
 const { recommend } = require("./recommend");
 const { limits, entitlementForKitchen } = require("./entitlements");
+const { getMany } = require("./collections");
+const { activeMealIds, updateActiveMeal, historyPage } = require("./history");
+const { readBackup } = require("./backup");
+const { updateReferences } = require("./media");
+const { activePeople, activeParticipants } = require("./people");
 const { categories, validateCategories } = require("./categories");
 const { recipes, findRecipe } = require("./library");
 const { recipeDetails, selectionDetails } = require("./recipe-details");
@@ -32,6 +37,8 @@ const {
 const writable = new Set([
   ...writableTools,
   "feedback.submit",
+  "backup.restoreKitchen",
+  "backup.restoreDish",
   "item.undo",
   "kitchen.update",
   "profile.update",
@@ -112,7 +119,8 @@ function createService({
       participantKey(mid, actor),
     );
     ensure(
-      participant?.status === "active",
+      participant?.status === "active" &&
+        (participant.membership_epoch || 0) === (member.epoch || 0),
       "NOT_FOUND",
       "内容不存在或无权查看",
     );
@@ -123,6 +131,18 @@ function createService({
         "只有本餐接单厨师可以操作",
       );
     return { meal, kitchen, member, participant };
+  }
+  async function currentChoices(tx, m) {
+    const { actors } = await activeParticipants(tx, m, crypto.hash);
+    return [
+      ...(
+        await getMany(
+          tx,
+          "selections",
+          actors.map((a) => key(m.id, a)),
+        )
+      ).values(),
+    ];
   }
   async function readMeal(tx, mid, actor) {
     const { meal, participant } = await mealAccess(tx, mid, actor);
@@ -159,24 +179,32 @@ function createService({
       },
       participant_count: 0,
     };
-    for (const a of meal.participant_ids) {
-      const p = await tx.get("meal_memberships", participantKey(mid, a));
-      if (p?.status === "active") response.participant_count++;
-    }
+    const { actors, people, parts } = await activeParticipants(
+      tx,
+      meal,
+      crypto.hash,
+    );
+    response.participant_count = actors.length;
     if (participant.role === "cook") {
       const selections = [];
+      const choices = await getMany(
+        tx,
+        "selections",
+        meal.participant_ids.map((a) => key(mid, a)),
+      );
       response.cook_candidates = [];
-      for (const a of meal.participant_ids) {
-        const p = await tx.get("meal_memberships", participantKey(mid, a));
-        if (p?.status !== "active") continue;
+      for (const a of actors) {
+        const p = parts.get(participantKey(mid, a));
+        if (p?.status !== "active" || people.get(a)?.status !== "active")
+          continue;
         if (a !== actor) {
-          const candidate = await tx.get("users", a);
+          const candidate = people.get(a);
           if (candidate?.status === "active")
             response.cook_candidates.push({ id: a, name: candidate.name });
         }
-        const s = await tx.get("selections", key(mid, a));
+        const s = choices.get(key(mid, a));
         if (s) {
-          const user = await tx.get("users", a);
+          const user = people.get(a);
           selections.push({
             name: user?.name || "一位朋友",
             items: selectionRows(meal.menu, s.items),
@@ -282,6 +310,7 @@ function createService({
             media_id: image.id,
             kitchen_id: image.kitchen_id,
             actor,
+            membership_epoch: image.membership_epoch || 0,
           });
         const result = { id: image.id, status: image.status };
         await tx.put("receipts", receiptId, {
@@ -315,6 +344,7 @@ function createService({
       "kitchen.update": [payload.name, payload.description],
       "profile.update": [payload.name],
       "kitchen.create": [payload.name, payload.description],
+      "backup.restoreKitchen": [payload.name, payload.description],
       "category.save": (Array.isArray(payload.categories)
         ? payload.categories
         : []
@@ -345,6 +375,8 @@ function createService({
       "meal.publish": [payload.title],
       "selection.replace": [payload.note],
     };
+    if (action === "backup.restoreDish")
+      textByAction[action] = textByAction["dish.save"];
     if (textByAction[action]) {
       const content = textByAction[action]
         .filter((x) => typeof x === "string" && x.trim())
@@ -601,8 +633,33 @@ function createService({
             message: text(payload.message, 500, "反馈内容"),
             created_at: now,
             status: "received",
+            revision: 1,
           });
+          user.feedback_ids = [...(user.feedback_ids || []), fid].slice(-100);
+          await tx.put("users", actor, user);
           result = { id: fid, status: "received" };
+          break;
+        }
+        case "feedback.read": {
+          const ids = payload.feedback_id
+            ? [id(payload.feedback_id)]
+            : (user.feedback_ids || []).slice(-20).reverse();
+          const rows = await getMany(tx, "feedback", ids);
+          result = {
+            items: ids
+              .filter((fid) => rows.get(fid)?.actor === actor)
+              .map((fid) => {
+                const r = rows.get(fid);
+                return {
+                  id: fid,
+                  message: r.message,
+                  status: r.status,
+                  reply: r.reply || "",
+                  created_at: r.created_at,
+                  updated_at: r.updated_at || r.created_at,
+                };
+              }),
+          };
           break;
         }
         case "kitchen.update": {
@@ -629,6 +686,12 @@ function createService({
               "封面尚未审核通过",
             );
           }
+          await updateReferences(
+            tx,
+            { image_id: k.image_id },
+            { image_id: imageId },
+            key("kitchen", k.id).slice(0, 32),
+          );
           k.image_id = imageId;
           k.revision++;
           await tx.put("kitchens", k.id, k);
@@ -662,6 +725,7 @@ function createService({
           m.revision++;
           delete m.last_transition;
           await tx.put("meals", m.id, m);
+          await updateActiveMeal(tx, m, limits.active_meals);
           await tx.put("transition_audits", newId(), {
             actor,
             kitchen_id: m.kitchen_id,
@@ -670,7 +734,8 @@ function createService({
             reason,
             created_at: now,
           });
-          for (const a of m.participant_ids) {
+          for (const a of (await activeParticipants(tx, m, crypto.hash))
+            .actors) {
             const jid = key(m.id, a),
               job = await tx.get("notification_jobs", jid);
             if (job?.status === "pending") {
@@ -712,7 +777,27 @@ function createService({
           result = { name: user.name };
           break;
         }
+        case "backup.restoreKitchen":
         case "kitchen.create": {
+          if (action === "backup.restoreKitchen") {
+            input(
+              typeof payload.backup_group === "string" &&
+                /^[a-zA-Z0-9]{16,32}$/.test(payload.backup_group),
+              "备份恢复编号无效",
+            );
+            const oldId = user.restored_kitchens?.[payload.backup_group];
+            if (oldId) {
+              const old = await tx.get("kitchens", oldId);
+              if (old?.status === "active" && old.owner_id === actor) {
+                result = { id: oldId, resumed: true };
+                break;
+              }
+            }
+          }
+          const joined = await getMany(tx, "kitchens", user.kitchen_ids);
+          user.kitchen_ids = user.kitchen_ids.filter(
+            (id) => joined.get(id)?.status === "active",
+          );
           input(user.kitchen_ids.length < limits.kitchens, "最多加入5个厨房");
           const kid = newId();
           const k = {
@@ -724,9 +809,12 @@ function createService({
             member_ids: [actor],
             dish_ids: [],
             meal_ids: [],
+            active_meal_ids: [],
             revision: 1,
             created_at: now,
           };
+          if (action === "backup.restoreKitchen")
+            k.restore_group = payload.backup_group;
           await tx.put("kitchens", kid, k);
           await tx.put("memberships", memberKey(kid, actor), {
             kitchen_id: kid,
@@ -736,6 +824,10 @@ function createService({
             status: "active",
           });
           user.kitchen_ids.push(kid);
+          if (action === "backup.restoreKitchen") {
+            user.restored_kitchens ||= {};
+            user.restored_kitchens[payload.backup_group] = kid;
+          }
           await tx.put("users", actor, user);
           result = { id: kid };
           break;
@@ -749,12 +841,17 @@ function createService({
           const dishes = [],
             meals = [],
             members = [];
+          const dishRows = await getMany(tx, "dishes", k.dish_ids);
+          const priceRows =
+            member.cook_access === true || member.role === "cook"
+              ? await getMany(tx, "dish_prices", k.dish_ids)
+              : new Map();
           for (const did of k.dish_ids) {
-            const d = await tx.get("dishes", did);
+            const d = dishRows.get(did);
             if (!d) continue;
             const item = dishView(d);
             if (member.cook_access === true || member.role === "cook") {
-              const p = await tx.get("dish_prices", did);
+              const p = priceRows.get(did);
               item.default_price_minor = p?.value ?? null;
               item.default_variant_prices = (p?.variants || []).map((v) => ({
                 ...v,
@@ -762,27 +859,46 @@ function createService({
             }
             if (d.active || member.role !== "member") dishes.push(item);
           }
-          for (const mid of k.meal_ids.slice().reverse()) {
-            const p = await tx.get(
-              "meal_memberships",
-              participantKey(mid, actor),
-            );
-            if (p?.status === "active") {
-              const m = await tx.get("meals", mid);
+          const recentIds = [
+            ...new Set([
+              ...(await activeMealIds(tx, k)),
+              ...k.meal_ids.slice(-20),
+            ]),
+          ].reverse();
+          const participants = await getMany(
+            tx,
+            "meal_memberships",
+            recentIds.map((mid) => participantKey(mid, actor)),
+          );
+          const mealRows = await getMany(tx, "meals", recentIds);
+          for (const mid of recentIds) {
+            const p = participants.get(participantKey(mid, actor));
+            if (
+              p?.status === "active" &&
+              (p.membership_epoch || 0) === (member.epoch || 0)
+            ) {
+              const m = mealRows.get(mid);
               if (m) meals.push(mealSummary(m));
             }
           }
-          if (member.role === "owner")
+          if (member.role === "owner") {
+            const users = await getMany(tx, "users", k.member_ids);
+            const membershipRows = await getMany(
+              tx,
+              "memberships",
+              k.member_ids.map((a) => memberKey(k.id, a)),
+            );
             for (const a of k.member_ids) {
-              const u = await tx.get("users", a),
-                m = await tx.get("memberships", memberKey(k.id, a));
-              if (m?.status === "active")
+              const u = users.get(a),
+                m = membershipRows.get(memberKey(k.id, a));
+              if (m?.status === "active" && u?.status === "active")
                 members.push({
                   id: a,
                   name: u?.name || "厨房朋友",
                   role: m.role,
                 });
             }
+          }
           result = {
             entitlement: entitlementForKitchen(k),
             id: k.id,
@@ -795,8 +911,50 @@ function createService({
             categories: categories(k),
             dishes,
             meals,
+            meal_count: k.meal_ids.length,
             members,
           };
+          break;
+        }
+        case "history.read": {
+          const { kitchen: k, member } = await kitchenAccess(
+            tx,
+            payload.kitchen_id,
+            actor,
+          );
+          const page = historyPage(k, payload.cursor || "");
+          const parts = await getMany(
+            tx,
+            "meal_memberships",
+            page.ids.map((mid) => participantKey(mid, actor)),
+          );
+          const data = await getMany(tx, "meals", page.ids);
+          result = {
+            items: page.ids
+              .filter(
+                (mid) =>
+                  parts.get(participantKey(mid, actor))?.status === "active" &&
+                  (parts.get(participantKey(mid, actor)).membership_epoch ||
+                    0) === (member.epoch || 0) &&
+                  data.has(mid),
+              )
+              .map((mid) => mealSummary(data.get(mid))),
+            next_cursor: page.next_cursor,
+            total: page.total,
+          };
+          break;
+        }
+        case "backup.read": {
+          keys(payload, ["request_id", "kitchen_id", "section", "cursor"]);
+          result = await readBackup(payload, {
+            tx,
+            actor,
+            user,
+            kitchenAccess,
+            readMeal,
+            participantKey,
+            hash: crypto.hash,
+          });
           break;
         }
         case "category.save": {
@@ -859,6 +1017,7 @@ function createService({
           result = { revision: k.revision };
           break;
         }
+        case "backup.restoreDish":
         case "dish.save": {
           const { kitchen: k, member } = await kitchenAccess(
             tx,
@@ -866,7 +1025,30 @@ function createService({
             actor,
             ["owner", "cook"],
           );
+          const restoring = action === "backup.restoreDish";
+          let sourceKey;
+          if (restoring) {
+            ensure(
+              k.owner_id === actor && k.restore_group === payload.backup_group,
+              "FORBIDDEN",
+              "只能恢复到本次创建的新厨房",
+            );
+            id(payload.source_id);
+            sourceKey = key(payload.backup_group, payload.source_id).slice(
+              0,
+              32,
+            );
+            if (k.restored_dishes?.[sourceKey]) {
+              result = {
+                id: k.restored_dishes[sourceKey],
+                already_present: true,
+              };
+              break;
+            }
+            input(!payload.dish_id, "恢复不会覆盖已有菜谱");
+          }
           keys(payload, [
+            ...(restoring ? ["backup_group", "source_id"] : []),
             "request_id",
             "kitchen_id",
             "dish_id",
@@ -979,6 +1161,7 @@ function createService({
             "FORBIDDEN",
             "只有厨房厨师可以修改内部价格",
           );
+          await updateReferences(tx, old, d, key("dish", did).slice(0, 32));
           await tx.put("dishes", did, d);
           if (canPrice) {
             const price =
@@ -1021,8 +1204,12 @@ function createService({
             });
           }
           if (!old) k.dish_ids.push(did);
+          if (restoring) {
+            k.restored_dishes ||= {};
+            k.restored_dishes[sourceKey] = did;
+          }
           if (old && d.active !== old.active) {
-            for (const mid of k.meal_ids) {
+            for (const mid of await activeMealIds(tx, k)) {
               const m = await tx.get("meals", mid);
               if (m?.status === "open") {
                 const entry = m.menu.find((x) => x.id === did);
@@ -1040,15 +1227,16 @@ function createService({
           break;
         }
         case "meal.publish": {
-          const { kitchen: k } = await kitchenAccess(
+          const { kitchen: k, member } = await kitchenAccess(
             tx,
             payload.kitchen_id,
             actor,
             ["owner", "cook"],
           );
+          k.active_meal_ids = await activeMealIds(tx, k);
           input(
-            k.meal_ids.length < limits.meals,
-            "当前厨房已达40场饭局，可导出备份后关闭旧厨房并创建新厨房",
+            k.active_meal_ids.length < limits.active_meals,
+            "同时进行中的饭局已达40场，请先结束一场",
           );
           input(
             Array.isArray(payload.dish_ids) &&
@@ -1072,15 +1260,19 @@ function createService({
           const mid = newId(),
             menu = [],
             prices = {};
+          payload.dish_ids.forEach(id);
+          const dishRows = await getMany(tx, "dishes", payload.dish_ids),
+            priceRows = await getMany(tx, "dish_prices", payload.dish_ids);
           for (const did of payload.dish_ids) {
-            const d = await load(tx, "dishes", id(did));
+            const d = dishRows.get(did);
+            ensure(d, "NOT_FOUND", "菜谱不存在");
             ensure(
               d.kitchen_id === k.id && d.active,
               "INVALID_INPUT",
               "包含不可用的菜品",
             );
             menu.push(dishView(d));
-            const price = await tx.get("dish_prices", did);
+            const price = priceRows.get(did);
             prices[did] = price?.value ?? null;
             for (const v of price?.variants || [])
               if (d.variants?.includes(v.variant))
@@ -1108,12 +1300,19 @@ function createService({
             plan_confirmed: false,
             created_at: now,
           };
+          await updateReferences(
+            tx,
+            null,
+            { menu },
+            key("meal", mid).slice(0, 32),
+          );
           await tx.put("meals", mid, m);
           await tx.put("meal_memberships", participantKey(mid, actor), {
             meal_id: mid,
             user_id: actor,
             role: "cook",
             status: "active",
+            membership_epoch: member.epoch || 0,
           });
           await tx.put("meal_prices", mid, {
             kitchen_id: k.id,
@@ -1121,6 +1320,7 @@ function createService({
             revision: 1,
           });
           k.meal_ids.push(mid);
+          k.active_meal_ids.push(mid);
           k.revision++;
           await tx.put("kitchens", k.id, k);
           result = { id: mid };
@@ -1239,9 +1439,16 @@ function createService({
             k.member_ids.push(actor);
           }
           if (!user.kitchen_ids.includes(k.id)) {
+            const live = await getMany(tx, "kitchens", user.kitchen_ids);
+            user.kitchen_ids = user.kitchen_ids.filter(
+              (id) => live.get(id)?.status === "active",
+            );
             input(user.kitchen_ids.length < limits.kitchens, "最多加入5个厨房");
             user.kitchen_ids.push(k.id);
           }
+          m.participant_ids = (
+            await activeParticipants(tx, m, crypto.hash)
+          ).actors;
           if (!m.participant_ids.includes(actor)) {
             input(m.participant_ids.length < limits.members, "饭局人数已满");
             m.participant_ids.push(actor);
@@ -1252,13 +1459,16 @@ function createService({
             role: oldMember?.role || "member",
             cook_access: oldMember?.cook_access === true,
             status: "active",
+            epoch: oldMember?.epoch || 0,
           });
           const oldPart = await tx.get(
             "meal_memberships",
             participantKey(m.id, actor),
           );
           ensure(
-            oldPart?.status !== "revoked",
+            oldPart?.status !== "revoked" &&
+              (!oldPart ||
+                (oldPart.membership_epoch || 0) === (oldMember?.epoch || 0)),
             "FORBIDDEN",
             "当前邀请不能恢复本餐资格",
           );
@@ -1267,6 +1477,7 @@ function createService({
             user_id: actor,
             role: oldPart?.role || "member",
             status: "active",
+            membership_epoch: oldMember?.epoch || 0,
           });
           k.revision++;
           m.revision++;
@@ -1316,14 +1527,18 @@ function createService({
           for (const did of new Set(items.map((i) => i.dish_id)))
             input(dishQuantity(items, did) <= 20, "同一道菜的合计请求最多20份");
           const globalLines = new Set(items.map((i) => i.line_id));
-          for (const a of m.participant_ids) {
-            if (a === actor) continue;
-            const p = await tx.get("meal_memberships", participantKey(m.id, a));
-            if (p?.status !== "active") continue;
-            const s = await tx.get("selections", key(m.id, a));
-            for (const i of selectionRows(m.menu, s?.items || []))
+          const participants = (
+            await activeParticipants(tx, m, crypto.hash)
+          ).actors.filter((a) => a !== actor);
+          for (const choice of (
+            await getMany(
+              tx,
+              "selections",
+              participants.map((a) => key(m.id, a)),
+            )
+          ).values())
+            for (const i of selectionRows(m.menu, choice.items || []))
               globalLines.add(i.line_id);
-          }
           input(
             globalLines.size <= limits.meal_lines,
             "本餐规格组合已达80项，请与厨师确认后调整",
@@ -1400,6 +1615,7 @@ function createService({
           }
           m.revision++;
           await tx.put("meals", m.id, m);
+          await updateActiveMeal(tx, m, limits.active_meals);
           result = { id: m.id, status: m.status, revision: m.revision };
           break;
         }
@@ -1420,13 +1636,7 @@ function createService({
             Array.isArray(payload.items) &&
               payload.items.length <= limits.meal_lines,
           );
-          const requests = [];
-          for (const a of m.participant_ids) {
-            const p = await tx.get("meal_memberships", participantKey(m.id, a));
-            if (p?.status !== "active") continue;
-            const r = await tx.get("selections", key(m.id, a));
-            if (r) requests.push(r);
-          }
+          const requests = await currentChoices(tx, m);
           const demand = mealDemand(m.menu, requests),
             seen = new Set();
           const items = payload.items.map((i) => {
@@ -1488,6 +1698,7 @@ function createService({
             m.status = "completed";
           m.revision++;
           await tx.put("meals", m.id, m);
+          await updateActiveMeal(tx, m, limits.active_meals);
           result = { id: m.id, revision: m.revision };
           break;
         }
@@ -1544,11 +1755,13 @@ function createService({
             : "cooking";
           m.revision++;
           await tx.put("meals", m.id, m);
+          await updateActiveMeal(tx, m, limits.active_meals);
           if (
             m.status === "completed" &&
             m.items.some((i) => i.status === "served")
           )
-            for (const a of m.participant_ids) {
+            for (const a of (await activeParticipants(tx, m, crypto.hash))
+              .actors) {
               const p = await tx.get("notification_preferences", key(m.id, a));
               if (
                 p?.accepted &&
@@ -1589,16 +1802,7 @@ function createService({
           if (price !== null) integer(price, 0, 9999999, "内部参考价");
           let pk = payload.dish_id;
           if (payload.line_id) {
-            const requests = [];
-            for (const a of m.participant_ids) {
-              const p = await tx.get(
-                "meal_memberships",
-                participantKey(m.id, a),
-              );
-              if (p?.status !== "active") continue;
-              const s = await tx.get("selections", key(m.id, a));
-              if (s) requests.push(s);
-            }
+            const requests = await currentChoices(tx, m);
             const row = mealDemand(m.menu, requests).find(
               (r) =>
                 r.line_id === payload.line_id && r.dish_id === payload.dish_id,
@@ -1684,6 +1888,11 @@ function createService({
             "确认计划后不能更换厨师",
           );
           const target = id(payload.member_id);
+          ensure(
+            (await tx.get("users", target))?.status === "active",
+            "NOT_FOUND",
+            "成员账号不可用",
+          );
           const member = await tx.get("memberships", memberKey(k.id, target)),
             part = await tx.get(
               "meal_memberships",
@@ -1725,31 +1934,28 @@ function createService({
             action === "kitchen.leave" ? actor : id(payload.member_id);
           input(target !== k.owner_id, "主人请先转让厨房或关闭厨房");
           input(k.member_ids.includes(target), "成员不存在");
-          for (const mid of k.meal_ids) {
-            const m = await tx.get("meals", mid);
-            if (!m) continue;
+          const active = await getMany(tx, "meals", await activeMealIds(tx, k));
+          for (const m of active.values())
             ensure(
-              !(
-                m.cook_id === target &&
-                ["open", "locked", "cooking"].includes(m.status)
-              ),
+              m.cook_id !== target,
               "ACTIVE_COOK",
               "该成员还有负责的饭局，请先结束饭局",
             );
-            const p = await tx.get(
-              "meal_memberships",
-              participantKey(mid, target),
-            );
-            if (p) {
-              p.status = "revoked";
-              await tx.put("meal_memberships", participantKey(mid, target), p);
-            }
-            clearActor(m, target);
-            m.participant_ids = m.participant_ids.filter((a) => a !== target);
-            m.revision++;
-            await tx.put("meals", mid, m);
-          }
           const member = await load(tx, "memberships", memberKey(k.id, target));
+          member.epoch = (member.epoch || 0) + 1;
+          const jobId = key("member-cleanup", k.id, target, String(now));
+          await tx.put("cleanup_jobs", jobId, {
+            id: jobId,
+            kind: "member",
+            actor: target,
+            kitchen_id: k.id,
+            membership_id: memberKey(k.id, target),
+            membership_epoch: member.epoch,
+            status: "pending",
+            table: 0,
+            cursor: "",
+            created_at: now,
+          });
           member.status = action === "member.remove" ? "revoked" : "left";
           await tx.put("memberships", memberKey(k.id, target), member);
           k.member_ids = k.member_ids.filter((a) => a !== target);
@@ -1772,14 +1978,11 @@ function createService({
             ["owner"],
           );
           revision(payload.expected_revision, k.revision);
-          for (const mid of k.meal_ids) {
-            const m = await tx.get("meals", mid);
-            ensure(
-              !m || ["completed", "cancelled", "archived"].includes(m.status),
-              "ACTIVE_MEAL",
-              "请先结束所有饭局",
-            );
-          }
+          ensure(
+            (await activeMealIds(tx, k)).length === 0,
+            "ACTIVE_MEAL",
+            "请先结束所有饭局",
+          );
           await tx.put("cleanup_jobs", "kitchen-" + k.id, {
             id: "kitchen-" + k.id,
             kind: "kitchen",
@@ -1794,62 +1997,33 @@ function createService({
           k.status = "closed";
           k.revision++;
           await tx.put("kitchens", k.id, k);
-          for (const a of k.member_ids) {
-            const u = await tx.get("users", a);
-            if (u) {
-              u.kitchen_ids = u.kitchen_ids.filter((i) => i !== k.id);
-              await tx.put("users", a, u);
-            }
-          }
+          user.kitchen_ids = user.kitchen_ids.filter((id) => id !== k.id);
+          await tx.put("users", actor, user);
           result = { closed: true };
           break;
         }
         case "account.delete": {
-          for (const kid of user.kitchen_ids) {
-            const k = await tx.get("kitchens", kid);
-            if (!k || k.status !== "active") continue;
+          const kitchens = await getMany(tx, "kitchens", user.kitchen_ids);
+          for (const k of kitchens.values()) {
+            if (k.status !== "active") continue;
             ensure(
               k.owner_id !== actor,
               "OWNER_TRANSFER_REQUIRED",
               "请先转让或关闭你创建的厨房",
             );
-            for (const mid of k.meal_ids) {
-              const m = await tx.get("meals", mid);
-              ensure(
-                !m ||
-                  m.cook_id !== actor ||
-                  ["completed", "cancelled", "archived"].includes(m.status),
-                "ACTIVE_COOK",
-                "请先结束负责的饭局",
-              );
-            }
+            const active = await getMany(
+              tx,
+              "meals",
+              await activeMealIds(tx, k),
+            );
+            for (const m of active.values())
+              ensure(m.cook_id !== actor, "ACTIVE_COOK", "请先结束负责的饭局");
           }
-          for (const kid of user.kitchen_ids) {
-            const k = await tx.get("kitchens", kid);
-            if (!k) continue;
+          for (const [kid, k] of kitchens) {
             k.member_ids = k.member_ids.filter((a) => a !== actor);
             k.wishes = (k.wishes || []).filter((w) => w.actor !== actor);
             k.revision++;
             await tx.put("kitchens", kid, k);
-            for (const mid of k.meal_ids) {
-              const m = await tx.get("meals", mid);
-              if (m) {
-                clearActor(m, actor);
-                m.participant_ids = m.participant_ids.filter(
-                  (a) => a !== actor,
-                );
-                m.revision++;
-                await tx.put("meals", mid, m);
-              }
-              const p = await tx.get(
-                "meal_memberships",
-                participantKey(mid, actor),
-              );
-              if (p) {
-                p.status = "revoked";
-                await tx.put("meal_memberships", participantKey(mid, actor), p);
-              }
-            }
           }
           const job = {
             id: actor,
@@ -1884,12 +2058,16 @@ function createService({
                 "meal_memberships",
                 participantKey(mid, actor),
               );
-              if (p?.status === "active") {
+              if (
+                p?.status === "active" &&
+                (p.membership_epoch || 0) === (member.epoch || 0)
+              ) {
                 const m = await tx.get("meals", mid);
                 meals.push({
                   ...(await readMeal(tx, mid, actor)),
                   shopping: await shoppingView(m, actor, tx, crypto.hash),
-                  own_review: (await reviewView(m, actor, tx)).own,
+                  own_review: (await reviewView(m, actor, tx, 0, crypto.hash))
+                    .own,
                 });
               }
             }
@@ -1963,7 +2141,7 @@ function createService({
           break;
         }
         case "media.prepare": {
-          const { kitchen: k } = await kitchenAccess(
+          const { kitchen: k, member } = await kitchenAccess(
             tx,
             payload.kitchen_id,
             actor,
@@ -1974,9 +2152,12 @@ function createService({
             id: mid,
             kitchen_id: k.id,
             actor,
+            membership_epoch: member.epoch || 0,
             status: "awaiting_upload",
             created_at: now,
             expires_at: now + 86400000,
+            references_version: 1,
+            references: {},
           });
           result = { id: mid };
           break;

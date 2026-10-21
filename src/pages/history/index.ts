@@ -1,5 +1,6 @@
 import {
   profile,
+  call,
   kitchen,
   currentKitchen,
   currentMeal,
@@ -38,6 +39,9 @@ Page({
     visible: [] as MealRow[],
     activeCount: 0,
     currentId: "",
+    nextCursor: "",
+    total: 0,
+    loadingMore: false,
   },
   onShow() {
     void this.refresh();
@@ -62,16 +66,20 @@ Page({
         currentId: currentMeal(),
       });
       if (!p.kitchens.length) return;
-      const k = await kitchen(p.kitchens[i].id);
-      const meals = k.meals
-        .map((m) => ({
+      const result = await call("history.read", {
+        kitchen_id: p.kitchens[i].id,
+      });
+      const meals: MealRow[] = result.items
+        .map((m: MealSummary) => ({
           ...m,
           label: statusLabel(m.status, m.served),
           when: dateLabel(m.scheduled_at),
         }))
-        .sort((a, b) => b.scheduled_at - a.scheduled_at);
+        .sort((a: MealRow, b: MealRow) => b.scheduled_at - a.scheduled_at);
       this.setData({
         meals,
+        nextCursor: result.next_cursor,
+        total: result.total,
         activeCount: meals.filter((m) =>
           ["open", "locked", "cooking"].includes(m.status),
         ).length,
@@ -81,6 +89,35 @@ Page({
       this.setData({ error: (e as Error).message });
     } finally {
       this.setData({ loading: false });
+    }
+  },
+  async loadMore() {
+    if (!this.data.nextCursor || this.data.loadingMore) return;
+    const kid = this.data.kitchenId;
+    this.setData({ loadingMore: true });
+    try {
+      const r = await call("history.read", {
+        kitchen_id: kid,
+        cursor: this.data.nextCursor,
+      });
+      if (kid !== this.data.kitchenId) return;
+      const known = new Set(this.data.meals.map((m) => m.id));
+      const more = r.items
+        .filter((m: MealSummary) => !known.has(m.id))
+        .map((m: MealSummary) => ({
+          ...m,
+          label: statusLabel(m.status, m.served),
+          when: dateLabel(m.scheduled_at),
+        }));
+      this.setData({
+        meals: [...this.data.meals, ...more],
+        nextCursor: r.next_cursor,
+      });
+      this.filterRows();
+    } catch (e) {
+      failure(e);
+    } finally {
+      this.setData({ loadingMore: false });
     }
   },
   search(e: WechatMiniprogram.Input) {
@@ -115,6 +152,9 @@ Page({
       "cancelled",
     ][this.data.statusIndex];
     this.setData({
+      activeCount: this.data.meals.filter((m) =>
+        ["open", "locked", "cooking"].includes(m.status),
+      ).length,
       visible: this.data.meals.filter(
         (m) =>
           (m.title + " " + m.when).toLowerCase().includes(q) &&

@@ -20,6 +20,11 @@ function createMemoryStore(initial = {}, onCommit = () => {}) {
           async remove(c, id) {
             if (working[c]) delete working[c][id];
           },
+          async getMany(c, ids) {
+            return [...new Set(ids)]
+              .filter((id) => working[c]?.[id])
+              .map((id) => ({ id, data: clone(working[c][id]) }));
+          },
           async scan(c, limit = 100, cursor = "") {
             return Object.entries(working[c] || {})
               .sort(([a], [b]) => a.localeCompare(b))

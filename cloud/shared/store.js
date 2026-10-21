@@ -31,6 +31,15 @@ function cloudStore(db) {
           async remove(table, id) {
             await transaction.collection(table).doc(id).remove();
           },
+          async getMany(table, ids) {
+            if (!ids.length) return [];
+            const result = await transaction
+              .collection(table)
+              .where({ _id: db.command.in(ids) })
+              .limit(ids.length)
+              .get();
+            return result.data.map((data) => ({ id: data._id, data }));
+          },
           async scan(table, limit = 20, cursor = "") {
             let query = transaction.collection(table);
             if (cursor) query = query.where({ _id: db.command.gt(cursor) });

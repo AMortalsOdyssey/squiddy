@@ -12,7 +12,7 @@ import {
 Page({
   data: {
     local: isLocal,
-    version: "0.4.0",
+    version: "0.5.0",
     loading: true,
     notify: false,
     stats: { dishes: 0, meals: 0, members: 0 },
@@ -30,7 +30,7 @@ Page({
         this.setData({
           stats: {
             dishes: d.dishes.length,
-            meals: d.meals.length,
+            meals: d.meal_count ?? d.meals.length,
             members: d.members.length,
           },
           updates: d.meals

@@ -336,6 +336,12 @@ test("饭后反馈只评价上桌菜，本人和主厨可看；版本、审核�
   await f.call("alice", "account.delete");
   r = await f.call("chef", "meal.review.read", { meal_id: f.mid });
   assert.equal(r.feedback.length, 0);
+  // Visibility is revoked immediately; physical removal is an asynchronous job.
+  const { cleanupBatch } = require("../domain/maintenance");
+  for (let i = 0; i < 100; i++) {
+    const result = await cleanupBatch(f.store, f.actorId("alice"));
+    if (result.status === "completed") break;
+  }
   assert.ok(!f.store.snapshot().meals[f.mid].reviews[f.actorId("alice")]);
   assert.ok(
     Object.values(f.store.snapshot().meals[f.mid].reviews).every(

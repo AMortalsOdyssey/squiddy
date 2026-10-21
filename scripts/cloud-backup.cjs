@@ -178,6 +178,7 @@ function main() {
     { sha256, ...plan } = envelope;
   if (hash(JSON.stringify(plan)) !== sha256 || !Array.isArray(plan.rows))
     throw Error("Restore plan checksum invalid");
+  let unknownWrite = false;
   if (fs.existsSync(output)) {
     const previous = read(output);
     if (previous.plan_sha256 !== sha256 || previous.target !== target)
@@ -195,6 +196,7 @@ function main() {
         return;
       }
     }
+    unknownWrite = previous.status === "submitting";
   }
   const missing = missingRestoreRows(plan, rows(target));
   if (!missing.length) {
@@ -218,6 +220,16 @@ function main() {
     );
     return;
   }
+  if (unknownWrite)
+    throw Error(
+      "Earlier write result is unknown and current records are incomplete. Inspect its private receipt; no write was replayed.",
+    );
+  fs.writeFileSync(
+    output,
+    JSON.stringify({ target, plan_sha256: sha256, status: "submitting" }) +
+      "\n",
+    { mode: 0o600 },
+  );
   const result = cli("cloud_db_write_doc", {
     action: "insert",
     "collection-name": target,

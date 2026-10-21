@@ -71,6 +71,7 @@ export interface Kitchen extends KitchenSummary {
   revision: number;
   dishes: Dish[];
   meals: MealSummary[];
+  meal_count?: number;
   members: { id: string; name: string; role: string }[];
 }
 export interface Selection {
