@@ -9,32 +9,32 @@
 }
 .meal-heading {
   background: #fffefa;
-  border-radius: 28rpx;
-  padding: 28rpx;
-  margin: 12rpx 0 24rpx;
+  border-radius: 18rpx;
+  padding: 20rpx;
+  margin: 8rpx 0 16rpx;
 }
 .meal-heading .title {
-  font-size: 44rpx;
-  margin: 20rpx 0 12rpx;
+  font-size: 34rpx;
+  margin: 14rpx 0 8rpx;
 }
 .meal-schedule {
-  font-size: 28rpx;
+  font-size: 26rpx;
   font-weight: 500;
   margin-bottom: 4rpx;
 }
 .stage-tip {
   color: rgba(36, 51, 43, 0.65);
-  font-size: 25rpx;
-  margin-top: 20rpx;
-  padding-top: 20rpx;
+  font-size: 24rpx;
+  margin-top: 14rpx;
+  padding-top: 14rpx;
   border-top: 1rpx solid rgba(36, 75, 59, 0.08);
 }
 .progress-track {
-  height: 8rpx;
+  height: 6rpx;
   background: rgba(36, 75, 59, 0.08);
   border-radius: 8rpx;
   overflow: hidden;
-  margin-top: 24rpx;
+  margin-top: 16rpx;
 }
 .progress-fill {
   height: 100%;
@@ -45,24 +45,24 @@
 .progress-caption {
   font-size: 22rpx;
   color: rgba(36, 51, 43, 0.6);
-  margin-top: 10rpx;
+  margin-top: 8rpx;
 }
 .selection-list {
-  padding: 4rpx 24rpx;
+  padding: 4rpx 16rpx;
 }
 .selection-row {
   display: flex;
   align-items: center;
-  gap: 16rpx;
-  padding: 12rpx 0;
-  min-height: 112rpx;
+  gap: 12rpx;
+  padding: 8rpx 0;
+  min-height: 88rpx;
   border-bottom: 1rpx solid rgba(36, 75, 59, 0.07);
 }
 .selection-row:last-child {
   border-bottom: 0;
 }
 .portion-label {
-  font-size: 27rpx;
+  font-size: 26rpx;
   white-space: nowrap;
 }
 .remove-selection {
@@ -71,7 +71,7 @@
   padding: 0;
   background: transparent;
   color: rgba(36, 51, 43, 0.5);
-  font-size: 36rpx;
+  font-size: 28rpx;
   margin: 0 -16rpx 0 0;
 }
 .privacy-hint {
@@ -79,17 +79,17 @@
   color: rgba(36, 51, 43, 0.5);
 }
 .selection-explainer {
-  padding: 0 8rpx 24rpx;
-  font-size: 23rpx;
+  padding: 0 8rpx 16rpx;
+  font-size: 22rpx;
 }
 .readonly-note {
-  padding: 16rpx 0 24rpx;
+  padding: 12rpx 0 16rpx;
 }
 .kitchen-metrics {
   display: flex;
   justify-content: space-between;
-  padding: 12rpx 8rpx 28rpx;
-  gap: 12rpx;
+  padding: 8rpx 8rpx 20rpx;
+  gap: 8rpx;
 }
 .kitchen-metrics > view {
   flex: 1;
@@ -97,7 +97,7 @@
   color: rgba(36, 51, 43, 0.6);
 }
 .metric-number {
-  font-size: 48rpx;
+  font-size: 36rpx;
   color: #244b3b;
   line-height: 1.25;
   display: block;
@@ -105,16 +105,16 @@
   font-weight: 600;
 }
 .quick-actions {
-  margin-bottom: 28rpx;
+  margin-bottom: 20rpx;
 }
 .quick-actions .secondary {
-  font-size: 25rpx;
+  font-size: 24rpx;
 }
 .invite-ready {
   border: 1rpx solid rgba(36, 75, 59, 0.12);
 }
 .request {
-  padding: 24rpx 0;
+  padding: 16rpx 0;
   border-bottom: 1rpx solid rgba(36, 75, 59, 0.08);
 }
 .request:first-child {
@@ -126,37 +126,37 @@
 }
 .request-note {
   background: rgba(36, 75, 59, 0.05);
-  padding: 18rpx;
+  padding: 12rpx;
   border-radius: 12rpx;
-  font-size: 25rpx;
-  margin-top: 16rpx;
+  font-size: 24rpx;
+  margin-top: 12rpx;
 }
 .summary-card {
   background: #fffefa;
-  border-radius: 20rpx;
-  padding: 24rpx;
-  margin: 16rpx 0;
+  border-radius: 14rpx;
+  padding: 16rpx;
+  margin: 12rpx 0;
 }
 .summary-card .row {
-  margin-top: 12rpx;
+  margin-top: 8rpx;
 }
 .requested-count {
-  font-size: 26rpx;
+  font-size: 24rpx;
   color: #244b3b;
 }
 .under-button {
   text-align: center;
   font-size: 22rpx;
-  padding: 16rpx 0;
+  padding: 12rpx 0;
 }
 .plan-card {
   display: flex;
   align-items: center;
-  gap: 20rpx;
+  gap: 14rpx;
   background: #fffefa;
-  border-radius: 22rpx;
-  padding: 28rpx;
-  margin: 20rpx 0;
+  border-radius: 16rpx;
+  padding: 20rpx;
+  margin: 14rpx 0;
 }
 .plan-quantity {
   flex-shrink: 0;
@@ -168,27 +168,27 @@
   display: block;
 }
 .quote-section {
-  padding: 28rpx;
+  padding: 20rpx;
   background: rgba(36, 75, 59, 0.05);
-  border-radius: 24rpx;
-  margin-top: 40rpx;
+  border-radius: 16rpx;
+  margin-top: 28rpx;
 }
 .quote-toggle {
   width: 100%;
   margin: 0;
-  padding: 0 0 16rpx;
+  padding: 0 0 12rpx;
   text-align: left;
   justify-content: space-between;
   background: transparent;
   color: #244b3b;
-  font-size: 24rpx;
+  font-size: 23rpx;
 }
 .quote-label {
-  font-size: 24rpx;
+  font-size: 23rpx;
   color: rgba(36, 51, 43, 0.65);
 }
 .quote-total {
-  font-size: 44rpx;
+  font-size: 34rpx;
   font-weight: 600;
   margin-top: 8rpx;
 }
@@ -196,36 +196,36 @@
   font-size: 22rpx;
 }
 .quote-section .note {
-  margin: 24rpx 0 0;
+  margin: 16rpx 0 0;
 }
 .price-row {
-  margin-top: 24rpx;
-  padding-top: 24rpx;
+  margin-top: 16rpx;
+  padding-top: 16rpx;
   border-top: 1rpx solid rgba(36, 75, 59, 0.1);
-  font-size: 27rpx;
+  font-size: 26rpx;
 }
 .picker-action {
   display: flex;
   justify-content: space-between;
   color: #244b3b;
   background: rgba(36, 75, 59, 0.06);
-  padding: 24rpx;
-  border-radius: 16rpx;
-  margin-top: 24rpx;
+  padding: 16rpx;
+  border-radius: 12rpx;
+  margin-top: 16rpx;
 }
 .progress-card {
   background: #fffefa;
-  padding: 28rpx;
-  border-radius: 24rpx;
-  margin: 20rpx 0;
+  padding: 20rpx;
+  border-radius: 16rpx;
+  margin: 14rpx 0;
 }
 .item-status {
   display: flex;
   align-items: center;
-  gap: 12rpx;
-  font-size: 25rpx;
+  gap: 8rpx;
+  font-size: 24rpx;
   color: rgba(36, 51, 43, 0.6);
-  margin: 16rpx 0;
+  margin: 12rpx 0;
 }
 .status-dot {
   width: 12rpx;
@@ -240,5 +240,5 @@
   color: #244b3b;
 }
 .progress-actions {
-  margin-top: 24rpx;
+  margin-top: 16rpx;
 }

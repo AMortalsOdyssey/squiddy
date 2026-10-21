@@ -10,5 +10,5 @@ checkbox-group label {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24rpx;
+  gap: 16rpx;
 }

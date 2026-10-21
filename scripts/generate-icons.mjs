@@ -11,7 +11,7 @@ fs.mkdirSync("src/assets/icons", { recursive: true });
 for (const [name, body] of Object.entries(icons))
   for (const selected of [false, true]) {
     const color = selected ? "#244b3b" : "#657168";
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><g fill="none" stroke="${color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 64 64"><g transform="translate(8 8)" fill="none" stroke="${color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`;
     await sharp(Buffer.from(svg))
       .resize(81, 81)
       .png()

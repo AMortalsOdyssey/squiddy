@@ -1,22 +1,23 @@
 .profile-head {
   display: flex;
   align-items: center;
-  gap: 24rpx;
-  padding: 24rpx 0 32rpx;
+  gap: 16rpx;
+  padding: 16rpx 0 24rpx;
 }
 .profile-avatar {
-  width: 108rpx;
-  height: 108rpx;
+  width: 76rpx;
+  height: 76rpx;
   background: #244b3b;
   color: #fffefa;
-  border-radius: 32rpx;
+  border-radius: 20rpx;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 48rpx;
+  font-size: 34rpx;
+  flex-shrink: 0;
 }
 .profile-name {
-  font-size: 38rpx;
+  font-size: 30rpx;
   font-weight: 600;
   line-height: 1.4;
   margin-bottom: 8rpx;
@@ -24,40 +25,40 @@
 .kitchen-list,
 .account-links {
   margin-top: 0;
-  padding: 4rpx 28rpx;
+  padding: 4rpx 20rpx;
 }
 .kitchen-monogram,
 .account-icon {
-  width: 72rpx;
-  height: 72rpx;
+  width: 48rpx;
+  height: 48rpx;
   background: rgba(36, 75, 59, 0.06);
   color: #244b3b;
-  border-radius: 20rpx;
+  border-radius: 12rpx;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 30rpx;
+  font-size: 24rpx;
   flex-shrink: 0;
 }
 .account-icon {
-  font-size: 27rpx;
+  font-size: 26rpx;
 }
 .account-links .muted {
-  font-size: 23rpx;
+  font-size: 22rpx;
   margin-top: 4rpx;
 }
 .kitchen-empty {
-  padding: 36rpx 0;
+  padding: 24rpx 0;
 }
 .kitchen-empty .muted {
-  margin-top: 12rpx;
+  margin-top: 8rpx;
 }
 .demo-tools > .muted {
-  margin-top: 12rpx;
+  margin-top: 8rpx;
 }
 .brand-footer {
   color: rgba(36, 51, 43, 0.4);
   font-size: 22rpx;
   text-align: center;
-  padding: 32rpx 0;
+  padding: 24rpx 0;
 }
