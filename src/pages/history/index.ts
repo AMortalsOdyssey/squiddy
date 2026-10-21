@@ -22,6 +22,18 @@ Page({
     kitchenId: "",
     search: "",
     filter: "all",
+    dateIndex: 0,
+    dateOptions: ["不限日期", "今天", "近3天", "近7天", "近30天"],
+    statusIndex: 0,
+    statusOptions: [
+      "全部状态",
+      "正在点菜",
+      "已锁单",
+      "正在制作",
+      "已完成",
+      "已归档",
+      "已取消",
+    ],
     meals: [] as MealRow[],
     visible: [] as MealRow[],
     activeCount: 0,
@@ -79,12 +91,36 @@ Page({
     this.setData({ filter: e.currentTarget.dataset.filter });
     this.filterRows();
   },
+  dates(e: WechatMiniprogram.PickerChange) {
+    this.setData({ dateIndex: Number(e.detail.value) });
+    this.filterRows();
+  },
+  statuses(e: WechatMiniprogram.PickerChange) {
+    this.setData({ statusIndex: Number(e.detail.value) });
+    this.filterRows();
+  },
   filterRows() {
     const q = this.data.search.trim().toLowerCase();
+    const now = Date.now(),
+      day = Math.floor((now + 8 * 3600000) / 86400000) * 86400000 - 8 * 3600000;
+    const days = [0, 1, 3, 7, 30][this.data.dateIndex],
+      start = days ? day - (days - 1) * 86400000 : 0;
+    const status = [
+      "",
+      "open",
+      "locked",
+      "cooking",
+      "completed",
+      "archived",
+      "cancelled",
+    ][this.data.statusIndex];
     this.setData({
       visible: this.data.meals.filter(
         (m) =>
           (m.title + " " + m.when).toLowerCase().includes(q) &&
+          (!days ||
+            (m.scheduled_at >= start && m.scheduled_at < day + 86400000)) &&
+          (!status || m.status === status) &&
           (this.data.filter === "all" ||
             (this.data.filter === "active"
               ? ["open", "locked", "cooking"].includes(m.status)

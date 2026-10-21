@@ -256,3 +256,80 @@ test("重置演练只清理演练数据，云端选择与其他文件不受影�
   assert.notEqual(fresh.kitchenId, seed.kitchenId);
   assert.equal((await api.meal(fresh.mealId)).participant_count, 3);
 });
+
+test("重新打开同一厨房保留当前饭局，真正切换厨房时清除旧饭局", async () => {
+  const k = api.currentKitchen(),
+    m = api.currentMeal();
+  api.chooseKitchen(k);
+  assert.equal(api.currentMeal(), m);
+  api.chooseKitchen("other-kitchen");
+  assert.equal(api.currentMeal(), "");
+  api.chooseKitchen(k);
+  if (m) api.chooseMeal(m);
+});
+test("丰富菜谱页面贯通：导入预览、分步规格营养编辑、点菜口味提交与厨师明细", async () => {
+  local.selectActor("chef");
+  await local.seedDemo();
+  const k = await api.kitchen();
+  const importer = page("import");
+  await importer.onLoad();
+  importer.setData({
+    raw: "长名字的香菇彩椒鸡丁\n食材：鸡肉、香菇、彩椒\n做法：\n1. 洗净切好\n2. 炒熟\nhttps://example.com/original",
+  });
+  importer.parse();
+  assert.equal(importer.data.sourceUrl, "https://example.com/original");
+  await importer.save();
+  const after = await api.kitchen();
+  const d = after.dishes.find((d) => d.name === "长名字的香菇彩椒鸡丁");
+  assert.ok(d);
+  const editor = page("editor");
+  await editor.onLoad({ id: d.id });
+  editor.setData({
+    variants: "小份、大份",
+    attributes: "辣度:不辣、微辣\n加料:加葱、不加葱",
+    nutritionVisible: true,
+    nutritionSource: "包装标签",
+    nutritionBasis: "每100克",
+    calories: "120",
+  });
+  editor.splitSteps();
+  assert.equal(editor.data.stepRows.length, 2);
+  await editor.save();
+  const stored = (await api.kitchen()).dishes.find((x) => x.id === d.id);
+  assert.deepEqual(stored.variants, ["小份", "大份"]);
+  assert.equal(stored.nutrition.calories, 120);
+  assert.equal(stored.nutrition.protein, null);
+  const published = await api.mutate("meal.publish", {
+    kitchen_id: k.id,
+    title: "规格口味验收",
+    dish_ids: [d.id],
+    scheduled_at: Date.now() + 7200000,
+    cutoff_at: Date.now() + 3600000,
+  });
+  api.chooseMeal(published.id);
+  const detail = page("dish");
+  await detail.onLoad({ id: d.id });
+  detail.variant({ detail: { value: "1" } });
+  detail.option({
+    detail: { value: "1" },
+    currentTarget: { dataset: { index: 0 } },
+  });
+  detail.change(event({ delta: 1 }));
+  const cart = page("meal");
+  await cart.refresh();
+  assert.match(cart.data.draft[0].name, /大份/);
+  assert.match(cart.data.draft[0].name, /微辣/);
+  await cart.submit();
+  await cart.refresh();
+  assert.match(cart.data.requestRows[0].lines[0].label, /大份/);
+  assert.match(cart.data.requestRows[0].lines[0].label, /微辣/);
+  const menu = page("menu");
+  await menu.refresh();
+  menu.change(event({ id: d.id, delta: 1 }));
+  assert.equal(api.loadSelection(published.id).items[0].variant, "大份");
+  assert.equal(
+    api.loadSelection(published.id).items[0].options[0].value,
+    "微辣",
+  );
+  cart.onHide?.();
+});

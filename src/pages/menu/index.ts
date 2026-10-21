@@ -98,6 +98,29 @@ Page({
         } catch {}
       this.setData({
         coverUrl,
+        categories: [
+          { id: "all", name: "全部" },
+          ...k.categories
+            .filter((c) => !c.hidden)
+            .map((c) => ({
+              id: c.id,
+              name:
+                m?.menu.find((d) => d.category_id === c.id)?.category_name ||
+                c.name,
+            })),
+          ...Array.from(
+            new Map(
+              rows
+                .filter(
+                  (d) => !k.categories.some((c) => c.id === d.category_id),
+                )
+                .map((d) => [
+                  d.category_id,
+                  { id: d.category_id, name: d.category_name },
+                ]),
+            ).values(),
+          ),
+        ],
         kitchen: k,
         meal: m,
         dishes: rows,
@@ -127,7 +150,8 @@ Page({
     this.setData({
       visible: this.data.dishes.filter(
         (d) =>
-          (this.data.category === "all" || d.category === this.data.category) &&
+          (this.data.category === "all" ||
+            (d.category_id || d.category) === this.data.category) &&
           (d.name + d.ingredients.join(",")).toLowerCase().includes(q),
       ),
     });
@@ -141,6 +165,17 @@ Page({
     const id = e.currentTarget.dataset.id,
       delta = Number(e.currentTarget.dataset.delta);
     if (![-1, 1].includes(delta)) return;
+    const target = this.data.dishes.find((d) => d.id === id);
+    const previous = loadSelection(m.id) || m.selection;
+    if (
+      delta > 0 &&
+      target &&
+      (target.variants?.length || target.attributes?.length) &&
+      !previous.items.some((i) => i.dish_id === id)
+    ) {
+      wx.navigateTo({ url: "/pages/dish/index?id=" + id });
+      return;
+    }
     const rows = this.data.dishes.map((d) =>
       d.id === id
         ? { ...d, quantity: Math.max(0, Math.min(20, d.quantity + delta)) }
@@ -151,7 +186,11 @@ Page({
       ...old,
       items: rows
         .filter((d) => d.quantity > 0)
-        .map((d) => ({ dish_id: d.id, quantity: d.quantity })),
+        .map((d) => ({
+          ...old.items.find((i) => i.dish_id === d.id),
+          dish_id: d.id,
+          quantity: d.quantity,
+        })),
     };
     if (saveSelection(m.id, draft)) {
       this.setData({

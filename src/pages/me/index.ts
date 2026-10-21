@@ -4,11 +4,14 @@ import {
   failure,
   isLocal,
   chooseKitchen,
+  scope,
 } from "../../services/api";
 Page({
   data: {
     local: isLocal,
     name: "",
+    displayId: "",
+    preferredRole: "eater",
     kitchens: [] as any[],
     error: "",
     busy: false,
@@ -27,7 +30,14 @@ Page({
   async refresh() {
     try {
       const p = await profile();
-      this.setData({ name: p.name, kitchens: p.kitchens, error: "" });
+      this.setData({
+        name: p.name,
+        displayId: p.display_id,
+        preferredRole:
+          wx.getStorageSync("squiddy-preferred-role-" + scope()) || "eater",
+        kitchens: p.kitchens,
+        error: "",
+      });
     } catch (e) {
       this.setData({ error: (e as Error).message, kitchens: [] });
     }
@@ -94,6 +104,38 @@ Page({
   },
   create() {
     wx.navigateTo({ url: "/pages/kitchen/index?create=1" });
+  },
+  async switchRole() {
+    try {
+      const r = await wx.showActionSheet({
+        itemList: ["我来掌勺", "我来点菜"],
+      });
+      const role = r.tapIndex === 0 ? "cook" : "eater";
+      wx.setStorageSync("squiddy-preferred-role-" + scope(), role);
+      this.setData({ preferredRole: role });
+      wx.showToast({
+        title: role === "cook" ? "已切换为掌勺视角" : "已切换为点菜视角",
+        icon: "none",
+      });
+    } catch {}
+  },
+  async copyId() {
+    if (this.data.displayId)
+      await wx.setClipboardData({ data: this.data.displayId });
+  },
+  about() {
+    wx.navigateTo({ url: "/pages/about/index" });
+  },
+  workspace() {
+    wx.switchTab({
+      url:
+        this.data.preferredRole === "cook"
+          ? "/pages/meal/index"
+          : "/pages/menu/index",
+    });
+  },
+  library() {
+    wx.navigateTo({ url: "/pages/library/index" });
   },
   invite() {
     wx.navigateTo({ url: "/pages/invite/index" });

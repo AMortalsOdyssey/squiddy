@@ -37,6 +37,12 @@ Page({
   onLoad(q: Record<string, string>) {
     this.setData({ creating: q.create === "1" || !currentKitchen() });
   },
+  categories() {
+    wx.navigateTo({ url: "/pages/categories/index" });
+  },
+  library() {
+    wx.navigateTo({ url: "/pages/library/index" });
+  },
   onShow() {
     if (this.data.creating) this.setData({ loading: false });
     else void this.refresh();

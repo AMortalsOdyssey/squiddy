@@ -1,0 +1,70 @@
+.category-scroll {
+  width: 100%;
+  margin-top: 16rpx;
+  white-space: nowrap;
+}
+.category-strip {
+  display: inline-flex;
+  gap: 8rpx;
+}
+.category-chip {
+  display: inline-flex;
+  min-height: 68rpx;
+  padding: 12rpx 20rpx;
+  align-items: center;
+  border-radius: 12rpx;
+  color: #244b3b;
+  font-size: 24rpx;
+}
+.category-chip.active {
+  background: #244b3b;
+  color: #fffefa;
+}
+.recipe-mark {
+  width: 76rpx;
+  height: 88rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(36, 75, 59, 0.06);
+  color: #244b3b;
+  font-size: 32rpx;
+  border-radius: 12rpx;
+  flex-shrink: 0;
+}
+.row button.favorite-button {
+  width: 44px;
+  max-width: 44px;
+  flex: 0 0 44px;
+  min-width: 44px;
+  min-height: 44px;
+  flex-shrink: 0;
+  background: transparent;
+  color: #be6345;
+  font-size: 36rpx;
+  padding: 0;
+  margin: 0;
+}
+.recipe-meta {
+  font-size: 22rpx;
+  color: rgba(36, 51, 43, 0.6);
+  margin-top: 6rpx;
+}
+.recipe-actions {
+  margin-top: 12rpx;
+}
+.recipe-actions .secondary {
+  min-height: 72rpx;
+  font-size: 24rpx;
+}
+.recipe-detail {
+  border-top: 1rpx solid rgba(36, 75, 59, 0.08);
+  padding-top: 12rpx;
+  margin-top: 16rpx;
+  font-size: 24rpx;
+}
+.steps {
+  white-space: pre-wrap;
+  display: block;
+  line-height: 1.8;
+}

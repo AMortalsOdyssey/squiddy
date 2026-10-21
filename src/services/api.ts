@@ -101,8 +101,9 @@ export function currentKitchen(): string {
   return wx.getStorageSync("squiddy-kitchen-" + scope()) || "";
 }
 export function chooseKitchen(id: string) {
+  const changed = currentKitchen() !== id;
   wx.setStorageSync("squiddy-kitchen-" + scope(), id);
-  wx.removeStorageSync("squiddy-meal-" + scope());
+  if (changed) wx.removeStorageSync("squiddy-meal-" + scope());
 }
 export function currentMeal(): string {
   return wx.getStorageSync("squiddy-meal-" + scope()) || "";
@@ -119,7 +120,7 @@ export function draftKey(id: string) {
   return "squiddy-draft-v2-" + scope() + "-" + id;
 }
 function normalizeSelection(v: any): {
-  items: { dish_id: string; quantity: number }[];
+  items: import("./types").SelectionItem[];
   note: string;
   people: number;
   revision: number;
@@ -145,7 +146,37 @@ function normalizeSelection(v: any): {
     )
       return null;
     seen.add(i.dish_id);
-    items.push({ dish_id: i.dish_id, quantity: i.quantity });
+    if (
+      i.variant !== undefined &&
+      (typeof i.variant !== "string" || i.variant.length > 20)
+    )
+      return null;
+    if (
+      i.options !== undefined &&
+      (!Array.isArray(i.options) ||
+        i.options.length > 5 ||
+        !i.options.every(
+          (a: any) =>
+            typeof a.name === "string" &&
+            a.name.length <= 12 &&
+            typeof a.value === "string" &&
+            a.value.length <= 20,
+        ))
+    )
+      return null;
+    items.push({
+      dish_id: i.dish_id,
+      quantity: i.quantity,
+      ...(i.variant ? { variant: i.variant } : {}),
+      ...(i.options?.length
+        ? {
+            options: i.options.map((a: any) => ({
+              name: a.name,
+              value: a.value,
+            })),
+          }
+        : {}),
+    });
   }
   return {
     items,
@@ -212,18 +243,28 @@ export const statusLabel = (status: string, served = 0): string =>
     archived: "已归档",
   })[status] || status;
 export async function resolveImages(dishes: import("./types").Dish[]) {
+  const url = async (id: string) => {
+    if (!id) return "";
+    try {
+      const m = await call("media.read", { media_id: id });
+      if (m.status !== "approved") return "";
+      return isLocal
+        ? m.file_id
+        : (await call("media.url", { media_id: id })).url;
+    } catch {
+      return "";
+    }
+  };
   return Promise.all(
-    dishes.map(async (d) => {
-      if (!d.image_id) return d;
-      try {
-        const media = await call("media.read", { media_id: d.image_id });
-        if (media.status !== "approved") return d;
-        if (isLocal) return { ...d, image_url: media.file_id };
-        const file = await call("media.url", { media_id: d.image_id });
-        return { ...d, image_url: file.url };
-      } catch {
-        return d;
-      }
-    }),
+    dishes.map(async (d) => ({
+      ...d,
+      image_url: await url(d.image_id),
+      recipe_steps: await Promise.all(
+        (d.recipe_steps || []).map(async (s) => ({
+          ...s,
+          image_url: await url(s.image_id),
+        })),
+      ),
+    })),
   );
 }

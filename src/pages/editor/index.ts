@@ -28,6 +28,25 @@ Page({
     dishId: "",
     revision: 0,
     name: "",
+    subtitle: "",
+    sourceUrl: "",
+    stepTitle: "跟着这样做",
+    stepRows: [] as {
+      text: string;
+      image_id: string;
+      image_url?: string;
+      image_status?: string;
+    }[],
+    variants: "",
+    attributes: "",
+    nutritionVisible: false,
+    nutritionSource: "",
+    nutritionBasis: "每份",
+    calories: "",
+    protein: "",
+    fat: "",
+    carbs: "",
+    fiber: "",
     ingredients: "",
     allergens: "",
     steps: "",
@@ -55,11 +74,37 @@ Page({
       if (k.role === "member") throw Error("只有厨房管理员可以编辑菜谱");
       let d = k.dishes.find((d) => d.id === q.id);
       if (q.id && !d) throw Error("菜谱不存在");
-      this.setData({ canPrice: k.can_price });
+      this.setData({
+        canPrice: k.can_price,
+        categories: k.categories.map((c) => c.name),
+        categoryIds: k.categories.map((c) => c.id),
+      });
       if (d) [d] = await resolveImages([d]);
       if (d)
         this.setData({
           revision: d.revision,
+          subtitle: d.subtitle || "",
+          sourceUrl: d.source_url || "",
+          stepTitle: d.step_title || "跟着这样做",
+          stepRows: (d.recipe_steps || []).map((s) => ({
+            ...s,
+            image_status: s.image_id ? "approved" : "",
+          })),
+          variants: (d.variants || []).join("、"),
+          attributes: (d.attributes || [])
+            .map((a) => a.name + ":" + a.options.join("、"))
+            .join("\n"),
+          nutritionVisible: !!d.nutrition?.visible,
+          nutritionSource: d.nutrition?.source || "",
+          nutritionBasis: d.nutrition?.basis || "每份",
+          ...Object.fromEntries(
+            ["calories", "protein", "fat", "carbs", "fiber"].map((k) => [
+              k,
+              d!.nutrition?.[k as "calories"] == null
+                ? ""
+                : String(d!.nutrition![k as "calories"]),
+            ]),
+          ),
           name: d.name,
           ingredients: d.ingredients.join("、"),
           allergens: d.allergens.join("、"),
@@ -67,7 +112,10 @@ Page({
           minutes: String(d.minutes),
           defaultServes: String(d.default_serves),
           ingredientComplete: d.ingredient_complete,
-          categoryIndex: this.data.categoryIds.indexOf(d.category),
+          categoryIndex: Math.max(
+            0,
+            this.data.categoryIds.indexOf(d.category_id || d.category),
+          ),
           vegetarian: d.vegetarian,
           spicy: d.spicy,
           active: d.active,
@@ -120,6 +168,19 @@ Page({
     if (
       ![
         "name",
+        "subtitle",
+        "sourceUrl",
+        "stepTitle",
+        "variants",
+        "attributes",
+        "nutritionVisible",
+        "nutritionSource",
+        "nutritionBasis",
+        "calories",
+        "protein",
+        "fat",
+        "carbs",
+        "fiber",
         "ingredients",
         "allergens",
         "steps",
@@ -145,6 +206,19 @@ Page({
     if (
       ![
         "name",
+        "subtitle",
+        "sourceUrl",
+        "stepTitle",
+        "variants",
+        "attributes",
+        "nutritionVisible",
+        "nutritionSource",
+        "nutritionBasis",
+        "calories",
+        "protein",
+        "fat",
+        "carbs",
+        "fiber",
         "ingredients",
         "allergens",
         "steps",
@@ -161,7 +235,70 @@ Page({
     this.setData({ [field]: e.detail.value });
     this.remember();
   },
-  async photo() {
+  addStep() {
+    if (this.data.stepRows.length >= 15) return;
+    this.setData({
+      stepRows: [...this.data.stepRows, { text: "", image_id: "" }],
+    });
+    this.remember();
+  },
+  stepInput(e: WechatMiniprogram.Input) {
+    this.setData({
+      ["stepRows[" + Number(e.currentTarget.dataset.index) + "].text"]:
+        e.detail.value,
+    });
+    this.remember();
+  },
+  removeStep(e: WechatMiniprogram.TouchEvent) {
+    this.setData({
+      stepRows: this.data.stepRows.filter(
+        (_, i) => i !== Number(e.currentTarget.dataset.index),
+      ),
+    });
+    this.remember();
+  },
+  splitSteps() {
+    const rows = this.data.steps
+      .split(/\n+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 15);
+    if (!rows.length) return;
+    this.setData({ stepRows: rows.map((text) => ({ text, image_id: "" })) });
+    this.remember();
+  },
+  suggestSubtitle() {
+    if (!this.data.name) return;
+    this.setData({
+      subtitle:
+        "约" + this.data.minutes + "分钟，把" + this.data.name + "端上桌",
+    });
+    this.remember();
+  },
+  async checkStepImage(e: WechatMiniprogram.TouchEvent) {
+    const i = Number(e.currentTarget.dataset.index),
+      step = this.data.stepRows[i];
+    if (!step?.image_id) return;
+    try {
+      const r = await call("media.read", { media_id: step.image_id });
+      this.setData({ ["stepRows[" + i + "].image_status"]: r.status });
+      if (r.status !== "approved")
+        wx.showToast({ title: "图片仍在审核，请稍后重试", icon: "none" });
+    } catch (e) {
+      failure(e);
+    }
+  },
+  removeStepImage(e: WechatMiniprogram.TouchEvent) {
+    const i = Number(e.currentTarget.dataset.index);
+    this.setData({
+      ["stepRows[" + i + "].image_id"]: "",
+      ["stepRows[" + i + "].image_url"]: "",
+      ["stepRows[" + i + "].image_status"]: "",
+    });
+    this.remember();
+  },
+  async photo(e?: WechatMiniprogram.TouchEvent) {
+    const stepIndex = e?.currentTarget.dataset.step;
     if (this.data.busy) return;
     if (!this.data.mediaAvailable) {
       wx.showToast({
@@ -179,11 +316,9 @@ Page({
       });
       const file = pick.tempFiles[0];
       if (file.size > 2 * 1024 * 1024) throw Error("图片请控制在2MB以内");
-      this.setData({
-        busy: true,
-        imageUrl: file.tempFilePath,
-        imageStatus: "uploading",
-      });
+      this.setData({ busy: true });
+      if (stepIndex === undefined)
+        this.setData({ imageUrl: file.tempFilePath, imageStatus: "uploading" });
       const ticket = await mutate("media.prepare", {
         kitchen_id: currentKitchen(),
       });
@@ -199,10 +334,19 @@ Page({
           }),
         );
       const uploaded = await mutate("media.complete", payload);
-      this.setData({ imageId: ticket.id, imageStatus: uploaded.status });
+      if (stepIndex === undefined)
+        this.setData({ imageId: ticket.id, imageStatus: uploaded.status });
+      else {
+        this.setData({
+          ["stepRows[" + Number(stepIndex) + "].image_id"]: ticket.id,
+          ["stepRows[" + Number(stepIndex) + "].image_status"]: uploaded.status,
+          ["stepRows[" + Number(stepIndex) + "].image_url"]: file.tempFilePath,
+        });
+        this.remember();
+      }
     } catch (e) {
       if (!(e as any).errMsg?.includes("cancel")) failure(e);
-      this.setData({ imageStatus: "failed" });
+      if (stepIndex === undefined) this.setData({ imageStatus: "failed" });
     } finally {
       this.setData({ busy: false });
     }
@@ -226,23 +370,65 @@ Page({
     try {
       if (this.data.imageId && this.data.imageStatus !== "approved")
         throw Error("图片需审核通过才能保存，或先移除图片");
+      for (const step of this.data.stepRows) {
+        if (
+          step.image_id &&
+          (await call("media.read", { media_id: step.image_id })).status !==
+            "approved"
+        )
+          throw Error("步骤图片需审核通过才能保存，或先移除图片");
+      }
       const list = (s: string) =>
         s
           .split(/[、,，\n]/)
           .map((v) => v.trim())
           .filter(Boolean);
+      if (this.data.nutritionVisible && !this.data.nutritionSource.trim())
+        throw Error("展示营养数据前，请填写来源与计量依据");
       const data: Record<string, unknown> = {
         kitchen_id: currentKitchen(),
         dish_id: this.data.dishId || undefined,
         expected_revision: this.data.revision,
         name: this.data.name,
+        subtitle: this.data.subtitle,
+        source_url: this.data.sourceUrl,
+        step_title: this.data.stepTitle,
+        recipe_steps: this.data.stepRows.map((s) => ({
+          text: s.text,
+          image_id: s.image_id,
+        })),
+        variants: list(this.data.variants),
+        attributes: this.data.attributes
+          .split(/\n/)
+          .filter((s) => s.trim())
+          .map((s) => {
+            const pair = s.split(/[:：]/);
+            if (pair.length !== 2)
+              throw Error("口味属性请按 名称:选项、选项 填写");
+            return { name: pair[0].trim(), options: list(pair[1]) };
+          }),
+        nutrition: this.data.nutritionSource.trim()
+          ? {
+              visible: this.data.nutritionVisible,
+              source: this.data.nutritionSource,
+              basis: this.data.nutritionBasis,
+              ...Object.fromEntries(
+                ["calories", "protein", "fat", "carbs", "fiber"].map((k) => [
+                  k,
+                  this.data[k as "calories"].trim() === ""
+                    ? null
+                    : Number(this.data[k as "calories"]),
+                ]),
+              ),
+            }
+          : null,
         ingredients: list(this.data.ingredients),
         allergens: list(this.data.allergens),
         steps: this.data.steps,
         minutes: Number(this.data.minutes),
         default_serves: Number(this.data.defaultServes),
         ingredient_complete: this.data.ingredientComplete,
-        category: this.data.categoryIds[this.data.categoryIndex],
+        category_id: this.data.categoryIds[this.data.categoryIndex],
         vegetarian: this.data.vegetarian,
         spicy: this.data.spicy,
         active: this.data.active,

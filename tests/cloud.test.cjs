@@ -378,3 +378,28 @@ test("海报小程序码先鉴权、默认关闭，scene不含邀请口令且不
     (e) => e.code === "NOT_CONFIGURED",
   );
 });
+test("保留菜谱和已发布快照引用的步骤图片，只清理无引用图片", async () => {
+  const f = await setup();
+  const r = runtime({ store: f.store });
+  await f.store.transaction(async (tx) => {
+    const k = await tx.get("kitchens", f.kid);
+    const d = await tx.get("dishes", k.dish_ids[0]);
+    d.recipe_steps = [{ text: "步骤", image_id: "live-step" }];
+    await tx.put("dishes", d.id, d);
+    const m = await tx.get("meals", f.mid);
+    m.menu[0].recipe_steps = [{ text: "旧步骤", image_id: "snapshot-step" }];
+    await tx.put("meals", m.id, m);
+    for (const id of ["live-step", "snapshot-step", "unused-step"])
+      await tx.put("media", id, {
+        id,
+        kitchen_id: f.kid,
+        status: "approved",
+        expires_at: 1,
+      });
+  });
+  await r.maintenance({}, { SOURCE: "wx_trigger" });
+  const media = f.store.snapshot().media;
+  assert.ok(media["live-step"]);
+  assert.ok(media["snapshot-step"]);
+  assert.equal(media["unused-step"], undefined);
+});

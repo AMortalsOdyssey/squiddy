@@ -12,6 +12,9 @@ const {
 const { dishView, mealSummary, quoteView, categoryNames } = require("./views");
 const { recommend } = require("./recommend");
 const { limits, entitlementForKitchen } = require("./entitlements");
+const { categories, validateCategories } = require("./categories");
+const { recipes, findRecipe } = require("./library");
+const { recipeDetails, selectionDetails } = require("./recipe-details");
 const writable = new Set([
   "feedback.submit",
   "item.undo",
@@ -24,6 +27,11 @@ const writable = new Set([
   "meal.assignCook",
   "member.remove",
   "dish.save",
+  "category.save",
+  "dish.reorder",
+  "library.favorite",
+  "library.wish",
+  "library.import",
   "meal.publish",
   "invitation.create",
   "invitation.revoke",
@@ -290,8 +298,29 @@ function createService({
       "kitchen.update": [payload.name, payload.description],
       "profile.update": [payload.name],
       "kitchen.create": [payload.name, payload.description],
+      "category.save": (Array.isArray(payload.categories)
+        ? payload.categories
+        : []
+      ).map((c) => c?.name),
       "dish.save": [
         payload.name,
+        payload.subtitle,
+        payload.source_url,
+        payload.step_title,
+        payload.nutrition?.source,
+        payload.nutrition?.basis,
+        ...(Array.isArray(payload.variants) ? payload.variants : []),
+        ...(Array.isArray(payload.attributes)
+          ? payload.attributes
+          : []
+        ).flatMap((a) => [
+          a?.name,
+          ...(Array.isArray(a?.options) ? a.options : []),
+        ]),
+        ...(Array.isArray(payload.recipe_steps)
+          ? payload.recipe_steps
+          : []
+        ).map((s) => s?.text),
         payload.steps,
         ...(Array.isArray(payload.ingredients) ? payload.ingredients : []),
         ...(Array.isArray(payload.allergens) ? payload.allergens : []),
@@ -303,8 +332,10 @@ function createService({
       const content = textByAction[action]
         .filter((x) => typeof x === "string" && x.trim())
         .join("\n");
-      input(content.length <= 2200, "文字内容过长");
-      if (content) await moderate(content, context.OPENID);
+      input(content.length <= 6000, "文字内容过长");
+      if (content)
+        for (let offset = 0; offset < content.length; offset += 2000)
+          await moderate(content.slice(offset, offset + 2200), context.OPENID);
     }
     return store.transaction(async (tx) => {
       let user = await tx.get("users", actor);
@@ -353,7 +384,12 @@ function createService({
             "member.remove",
           ].includes(action)
             ? ["owner"]
-            : action === "dish.save"
+            : [
+                  "dish.save",
+                  "category.save",
+                  "dish.reorder",
+                  "library.import",
+                ].includes(action)
               ? ["owner", "cook"]
               : undefined,
         );
@@ -374,6 +410,151 @@ function createService({
       }
       let result;
       switch (action) {
+        case "library.read": {
+          keys(payload, ["request_id", "kitchen_id"]);
+          const access = payload.kitchen_id
+            ? await kitchenAccess(tx, payload.kitchen_id, actor)
+            : null;
+          const k = access?.kitchen;
+          const wishes = (k?.wishes || []).filter((w) =>
+            k.member_ids.includes(w.actor),
+          );
+          result = {
+            can_import: !!access && access.member.role !== "member",
+            kitchen_revision: k?.revision || 0,
+            recipes: recipes.map((r) => ({
+              ...r,
+              category_name: categoryNames[r.category],
+              favorite: (user.favorite_recipe_ids || []).includes(r.id),
+              wished: wishes.some(
+                (w) => w.actor === actor && w.recipe_id === r.id,
+              ),
+              wish_count: wishes.filter((w) => w.recipe_id === r.id).length,
+              in_kitchen: !!k?.library_imports?.[r.id],
+            })),
+          };
+          break;
+        }
+        case "library.favorite": {
+          keys(payload, ["request_id", "recipe_id", "favorite"]);
+          const r = findRecipe(payload.recipe_id);
+          input(!!r && typeof payload.favorite === "boolean", "菜谱不存在");
+          user.favorite_recipe_ids = (user.favorite_recipe_ids || []).filter(
+            (x) => x !== r.id,
+          );
+          if (payload.favorite) user.favorite_recipe_ids.push(r.id);
+          await tx.put("users", actor, user);
+          result = { favorite: payload.favorite };
+          break;
+        }
+        case "library.wish": {
+          keys(payload, [
+            "request_id",
+            "kitchen_id",
+            "recipe_id",
+            "wished",
+            "expected_revision",
+          ]);
+          const { kitchen: k } = await kitchenAccess(
+            tx,
+            payload.kitchen_id,
+            actor,
+          );
+          revision(payload.expected_revision, k.revision);
+          const r = findRecipe(payload.recipe_id);
+          input(!!r && typeof payload.wished === "boolean", "菜谱不存在");
+          input(
+            !k.library_imports?.[r.id] || !payload.wished,
+            "这道菜已经在厨房里了",
+          );
+          k.wishes = (k.wishes || []).filter(
+            (w) => !(w.actor === actor && w.recipe_id === r.id),
+          );
+          if (payload.wished)
+            k.wishes.push({ actor, recipe_id: r.id, created_at: now });
+          k.revision++;
+          await tx.put("kitchens", k.id, k);
+          result = { wished: payload.wished, revision: k.revision };
+          break;
+        }
+        case "library.import": {
+          keys(payload, [
+            "request_id",
+            "kitchen_id",
+            "recipe_ids",
+            "expected_revision",
+          ]);
+          const { kitchen: k } = await kitchenAccess(
+            tx,
+            payload.kitchen_id,
+            actor,
+            ["owner", "cook"],
+          );
+          revision(payload.expected_revision, k.revision);
+          input(
+            Array.isArray(payload.recipe_ids) &&
+              payload.recipe_ids.length > 0 &&
+              payload.recipe_ids.length <= 20 &&
+              new Set(payload.recipe_ids).size === payload.recipe_ids.length,
+            "每次请选择1至20道菜",
+          );
+          const selected = payload.recipe_ids.map((rid) => findRecipe(rid));
+          input(selected.every(Boolean), "菜谱不存在");
+          k.library_imports = k.library_imports || {};
+          const fresh = selected.filter((r) => !k.library_imports[r.id]);
+          input(
+            k.dish_ids.length + fresh.length <= limits.dishes,
+            "厨房最多保存80道菜，请减少本次导入数量",
+          );
+          const cats = categories(k),
+            ids = [];
+          for (const r of selected) {
+            if (k.library_imports[r.id]) {
+              ids.push(k.library_imports[r.id]);
+              continue;
+            }
+            let c = cats.find((c) => c.kind === r.category);
+            if (!c) {
+              input(cats.length < 20, "请先为导入的菜谱准备对应分类");
+              c = {
+                id: newId(),
+                name: categoryNames[r.category],
+                kind: r.category,
+                hidden: false,
+              };
+              if (cats.some((x) => x.name === c.name)) c.name += "家常";
+              cats.push(c);
+            }
+            const did = newId();
+            const { id: recipeId, ...data } = r;
+            await tx.put("dishes", did, {
+              ...data,
+              id: did,
+              kitchen_id: k.id,
+              library_recipe_id: recipeId,
+              category: c.kind,
+              category_id: c.id,
+              category_name: c.name,
+              revision: 1,
+            });
+            k.dish_ids.push(did);
+            k.library_imports[r.id] = did;
+            ids.push(did);
+          }
+          k.categories = cats;
+          k.wishes = (k.wishes || []).filter(
+            (w) => !payload.recipe_ids.includes(w.recipe_id),
+          );
+          k.revision++;
+          await tx.put("kitchens", k.id, k);
+          result = {
+            dish_ids: ids,
+            imported: fresh.length,
+            already_present: selected.length - fresh.length,
+            revision: k.revision,
+          };
+          break;
+        }
         case "feedback.submit": {
           const fid = newId();
           await tx.put("feedback", fid, {
@@ -466,7 +647,12 @@ function createService({
             if (k?.status === "active" && m?.status === "active")
               kitchens.push({ id: k.id, name: k.name, role: m.role });
           }
+          if (!user.display_id) {
+            user.display_id = "SQ" + newId();
+            await tx.put("users", actor, user);
+          }
           result = {
+            display_id: user.display_id,
             name: user.name,
             kitchens,
             limits,
@@ -561,10 +747,71 @@ function createService({
             role: member.role,
             can_price: member.cook_access === true || member.role === "cook",
             revision: k.revision,
+            categories: categories(k),
             dishes,
             meals,
             members,
           };
+          break;
+        }
+        case "category.save": {
+          const { kitchen: k } = await kitchenAccess(
+            tx,
+            payload.kitchen_id,
+            actor,
+            ["owner", "cook"],
+          );
+          keys(payload, [
+            "request_id",
+            "kitchen_id",
+            "expected_revision",
+            "categories",
+          ]);
+          revision(payload.expected_revision, k.revision);
+          const dishes = [];
+          for (const did of k.dish_ids)
+            dishes.push(await load(tx, "dishes", did));
+          const rows = validateCategories(payload.categories, dishes);
+          for (const d of dishes) {
+            const c = rows.find((c) => c.id === (d.category_id || d.category));
+            if (d.category_name !== c.name || d.category !== c.kind) {
+              d.category_name = c.name;
+              d.category = c.kind;
+              d.revision++;
+              await tx.put("dishes", d.id, d);
+            }
+          }
+          k.categories = rows;
+          k.revision++;
+          await tx.put("kitchens", k.id, k);
+          result = { revision: k.revision };
+          break;
+        }
+        case "dish.reorder": {
+          const { kitchen: k } = await kitchenAccess(
+            tx,
+            payload.kitchen_id,
+            actor,
+            ["owner", "cook"],
+          );
+          keys(payload, [
+            "request_id",
+            "kitchen_id",
+            "expected_revision",
+            "dish_ids",
+          ]);
+          revision(payload.expected_revision, k.revision);
+          input(
+            Array.isArray(payload.dish_ids) &&
+              payload.dish_ids.length === k.dish_ids.length &&
+              new Set(payload.dish_ids).size === k.dish_ids.length &&
+              payload.dish_ids.every((d) => k.dish_ids.includes(d)),
+            "菜谱列表已有变化，请刷新后排序",
+          );
+          k.dish_ids = payload.dish_ids.slice();
+          k.revision++;
+          await tx.put("kitchens", k.id, k);
+          result = { revision: k.revision };
           break;
         }
         case "dish.save": {
@@ -581,6 +828,7 @@ function createService({
             "expected_revision",
             "name",
             "category",
+            "category_id",
             "ingredients",
             "steps",
             "minutes",
@@ -592,6 +840,13 @@ function createService({
             "default_price_minor",
             "default_serves",
             "ingredient_complete",
+            "subtitle",
+            "source_url",
+            "step_title",
+            "recipe_steps",
+            "variants",
+            "attributes",
+            "nutrition",
           ]);
           const did = payload.dish_id ? id(payload.dish_id) : newId();
           const old = payload.dish_id ? await load(tx, "dishes", did) : null;
@@ -599,13 +854,10 @@ function createService({
             ensure(old.kitchen_id === k.id, "NOT_FOUND", "菜谱不存在");
             revision(payload.expected_revision, old.revision);
           } else input(k.dish_ids.length < limits.dishes, "最多保存80道菜");
-          input(
-            Object.prototype.hasOwnProperty.call(
-              categoryNames,
-              payload.category,
-            ),
-            "请选择菜谱分类",
+          const chosenCategory = categories(k).find(
+            (c) => c.id === (payload.category_id || payload.category),
           );
+          input(!!chosenCategory, "请选择菜谱分类");
           input(
             Array.isArray(payload.ingredients) &&
               payload.ingredients.length > 0 &&
@@ -624,7 +876,24 @@ function createService({
               "图片尚未审核通过",
             );
           }
+          const details = recipeDetails(payload, old);
+          for (const step of details.recipe_steps) {
+            if (!step.image_id) continue;
+            const image = await load(tx, "media", id(step.image_id));
+            ensure(
+              image.kitchen_id === k.id && image.status === "approved",
+              "INVALID_IMAGE",
+              "步骤图片尚未审核通过",
+            );
+          }
           const d = {
+            ...details,
+            ...(old?.library_recipe_id
+              ? {
+                  library_recipe_id: old.library_recipe_id,
+                  source_label: old.source_label,
+                }
+              : {}),
             default_serves: integer(
               payload.default_serves ?? 2,
               1,
@@ -635,7 +904,9 @@ function createService({
             id: did,
             kitchen_id: k.id,
             name: text(payload.name, 40, "菜名"),
-            category: payload.category,
+            category: chosenCategory.kind,
+            category_id: chosenCategory.id,
+            category_name: chosenCategory.name,
             ingredients: payload.ingredients.map((v) => text(v, 30, "食材")),
             steps: text(payload.steps || "", 1200, "做法", true),
             minutes: integer(payload.minutes, 1, 480, "时间"),
@@ -659,7 +930,10 @@ function createService({
           );
           await tx.put("dishes", did, d);
           if (canPrice) {
-            const price = payload.default_price_minor ?? null;
+            const price =
+              payload.default_price_minor === undefined && old
+                ? ((await tx.get("dish_prices", did))?.value ?? null)
+                : (payload.default_price_minor ?? null);
             if (price !== null) integer(price, 0, 9999999, "内部参考价");
             await tx.put("dish_prices", did, {
               kitchen_id: k.id,
@@ -861,7 +1135,7 @@ function createService({
               cutoff_at: m.cutoff_at,
               dishes: m.menu.map((d) => ({
                 name: d.name,
-                category_name: categoryNames[d.category],
+                category_name: d.category_name || categoryNames[d.category],
               })),
             };
             break;
@@ -939,7 +1213,7 @@ function createService({
           );
           const selected = new Set();
           const items = payload.items.map((i) => {
-            keys(i, ["dish_id", "quantity"]);
+            keys(i, ["dish_id", "quantity", "variant", "options"]);
             id(i.dish_id);
             input(!selected.has(i.dish_id), "菜品重复");
             selected.add(i.dish_id);
@@ -950,6 +1224,10 @@ function createService({
             return {
               dish_id: i.dish_id,
               quantity: integer(i.quantity, 1, 20, "请求份数"),
+              ...selectionDetails(
+                i,
+                m.menu.find((d) => d.id === i.dish_id),
+              ),
             };
           });
           const sid = key(m.id, actor),
@@ -1317,6 +1595,7 @@ function createService({
           member.status = action === "member.remove" ? "revoked" : "left";
           await tx.put("memberships", memberKey(k.id, target), member);
           k.member_ids = k.member_ids.filter((a) => a !== target);
+          k.wishes = (k.wishes || []).filter((w) => w.actor !== target);
           k.revision++;
           await tx.put("kitchens", k.id, k);
           const targetUser = await load(tx, "users", target);
@@ -1391,6 +1670,7 @@ function createService({
             const k = await tx.get("kitchens", kid);
             if (!k) continue;
             k.member_ids = k.member_ids.filter((a) => a !== actor);
+            k.wishes = (k.wishes || []).filter((w) => w.actor !== actor);
             k.revision++;
             await tx.put("kitchens", kid, k);
             for (const mid of k.meal_ids) {
@@ -1425,6 +1705,7 @@ function createService({
           user.status = "deleted";
           user.name = "已注销";
           user.kitchen_ids = [];
+          user.favorite_recipe_ids = [];
           await tx.put("users", actor, user);
           await tx.put("deletion_jobs", actor, job);
           await tx.put("cleanup_jobs", actor, job);
@@ -1449,7 +1730,12 @@ function createService({
             }
             kitchens.push({ name: k.name, role: member.role, meals });
           }
-          result = { name: user.name, exported_at: now, kitchens };
+          result = {
+            name: user.name,
+            exported_at: now,
+            favorite_recipe_ids: (user.favorite_recipe_ids || []).slice(),
+            kitchens,
+          };
           break;
         }
         case "share.create": {
@@ -1469,7 +1755,7 @@ function createService({
             title: m.title,
             dishes: m.menu.map((d) => ({
               name: d.name,
-              category_name: categoryNames[d.category],
+              category_name: d.category_name || categoryNames[d.category],
             })),
             expires_at: Math.min(m.scheduled_at + 86400000, now + 7 * 86400000),
             revoked: false,

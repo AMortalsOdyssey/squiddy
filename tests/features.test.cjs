@@ -46,6 +46,7 @@ test("下架仅改变开放菜单可选性，锁单快照不变", async () => {
   };
   delete payload.id;
   delete payload.revision;
+  delete payload.category_name;
   await f.call("chef", "dish.save", payload);
   let m = await f.call("chef", "meal.read", { meal_id: f.mid });
   assert.equal(m.menu[0].active, false);

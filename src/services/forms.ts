@@ -2,6 +2,20 @@ import { scope, currentKitchen } from "./api";
 const fields: Record<string, string[]> = {
   editor: [
     "name",
+    "subtitle",
+    "sourceUrl",
+    "stepTitle",
+    "stepRows",
+    "variants",
+    "attributes",
+    "nutritionVisible",
+    "nutritionSource",
+    "nutritionBasis",
+    "calories",
+    "protein",
+    "fat",
+    "carbs",
+    "fiber",
     "ingredients",
     "allergens",
     "steps",
@@ -44,6 +58,13 @@ function allowed(kind: string, data: Record<string, unknown>) {
       (typeof v === "number" && Number.isFinite(v))
     )
       out[name] = v;
+    else if (
+      name === "stepRows" &&
+      Array.isArray(v) &&
+      v.length <= 15 &&
+      v.every((s) => typeof s.text === "string" && s.text.length <= 400)
+    )
+      out[name] = v.map((s) => ({ text: s.text, image_id: "" }));
     else if (
       name === "selected" &&
       Array.isArray(v) &&

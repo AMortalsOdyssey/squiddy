@@ -24,6 +24,8 @@ Page({
   data: {
     panel: "selection",
     showRequests: false,
+    requestSearch: "",
+    requestRows: [] as any[],
     showPrices: false,
     respondedAccounts: 0,
     representedPeople: 0,
@@ -160,6 +162,23 @@ Page({
         publicShareId: sameRole ? this.data.publicShareId : "",
         showPrices: sameRole ? this.data.showPrices : false,
         showRequests: sameRole ? this.data.showRequests : false,
+        requestRows: (m.requests || [])
+          .filter((r) => r.name.includes(this.data.requestSearch))
+          .map((r) => ({
+            ...r,
+            lines: r.items.map((i) => ({
+              label:
+                (m.menu.find((d) => d.id === i.dish_id)?.name || "菜品") +
+                [
+                  i.variant,
+                  ...(i.options || []).map((o) => o.name + "：" + o.value),
+                ]
+                  .filter(Boolean)
+                  .map((x) => " · " + x)
+                  .join(""),
+              quantity: i.quantity,
+            })),
+          })),
         respondedAccounts: m.requests?.length || 0,
         representedPeople:
           m.requests?.reduce((sum, x) => sum + (x.people || 1), 0) || 0,
@@ -189,7 +208,21 @@ Page({
         cutoff: dateLabel(m.cutoff_at),
         draft: draft.items.map((i) => ({
           ...i,
-          name: m.menu.find((d) => d.id === i.dish_id)?.name || "已不可用菜品",
+          name:
+            (m.menu.find((d) => d.id === i.dish_id)?.name || "已不可用菜品") +
+            ([
+              i.variant,
+              ...(i.options || []).map((o) => o.name + "：" + o.value),
+            ].filter(Boolean).length
+              ? "（" +
+                [
+                  i.variant,
+                  ...(i.options || []).map((o) => o.name + "：" + o.value),
+                ]
+                  .filter(Boolean)
+                  .join("，") +
+                "）"
+              : ""),
         })),
         note: draft.note,
         people: String(draft.people || 1),
@@ -255,6 +288,36 @@ Page({
         : ["selection", "progress"];
     if (allowed.includes(panel)) this.setData({ panel });
   },
+  requestSearch(e: WechatMiniprogram.Input) {
+    this.setData({ requestSearch: e.detail.value });
+    const m = this.data.meal;
+    this.setData({
+      requestRows: (m?.requests || [])
+        .filter((r) => r.name.includes(e.detail.value))
+        .map((r) => ({
+          ...r,
+          lines: r.items.map((i) => ({
+            label:
+              (m?.menu.find((d) => d.id === i.dish_id)?.name || "菜品") +
+              [
+                i.variant,
+                ...(i.options || []).map((o) => o.name + "：" + o.value),
+              ]
+                .filter(Boolean)
+                .map((x) => " · " + x)
+                .join(""),
+            quantity: i.quantity,
+          })),
+        })),
+    });
+  },
+  async notificationSettings() {
+    try {
+      await wx.openSetting({ withSubscriptions: true });
+    } catch (e) {
+      failure(e);
+    }
+  },
   toggleRequests() {
     this.setData({ showRequests: !this.data.showRequests });
   },
@@ -292,6 +355,8 @@ Page({
         items: this.data.draft.map((i) => ({
           dish_id: i.dish_id,
           quantity: i.quantity,
+          ...(i.variant ? { variant: i.variant } : {}),
+          ...(i.options?.length ? { options: i.options } : {}),
         })),
         note: this.data.note,
         people: Number(this.data.people),
@@ -324,6 +389,8 @@ Page({
         items: this.data.draft.map((i) => ({
           dish_id: i.dish_id,
           quantity: i.quantity,
+          ...(i.variant ? { variant: i.variant } : {}),
+          ...(i.options?.length ? { options: i.options } : {}),
         })),
         note: this.data.note,
         people: Number(this.data.people),
@@ -706,6 +773,14 @@ Page({
           tmplIds: [this.data.templateId],
         });
         accepted = r[this.data.templateId] === "accept";
+        if (!accepted) {
+          const choice = await wx.showModal({
+            title: "提醒尚未开启",
+            content: "可以在微信设置中检查订阅消息权限，返回后再点击开启提醒。",
+            confirmText: "去设置",
+          });
+          if (choice.confirm) await wx.openSetting({ withSubscriptions: true });
+        }
       }
       await mutate("notification.optin", { meal_id: m.id, accepted });
       this.setData({

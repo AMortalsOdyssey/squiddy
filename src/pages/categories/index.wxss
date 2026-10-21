@@ -1,0 +1,24 @@
+.row button.sort-button,
+.list-row button.sort-button {
+  width: 44px;
+  max-width: 44px;
+  flex: 0 0 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: #244b3b;
+  flex-shrink: 0;
+  font-size: 26rpx;
+}
+.card .row {
+  gap: 4rpx;
+}
+.footnote {
+  padding: 20rpx 0;
+  font-size: 22rpx;
+}
+.list-row {
+  font-size: 24rpx;
+}

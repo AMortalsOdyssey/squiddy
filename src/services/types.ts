@@ -1,4 +1,28 @@
+export interface SelectionItem {
+  dish_id: string;
+  quantity: number;
+  variant?: string;
+  options?: { name: string; value: string }[];
+}
 export interface Dish {
+  subtitle?: string;
+  source_url?: string;
+  source_label?: string;
+  step_title?: string;
+  recipe_steps?: { text: string; image_id: string; image_url?: string }[];
+  variants?: string[];
+  attributes?: { name: string; options: string[] }[];
+  nutrition?: {
+    visible: boolean;
+    source: string;
+    basis: string;
+    calories: number | null;
+    protein: number | null;
+    fat: number | null;
+    carbs: number | null;
+    fiber: number | null;
+  } | null;
+  category_id: string;
   default_serves: number;
   ingredient_complete: boolean;
   id: string;
@@ -35,6 +59,7 @@ export interface MealSummary {
   served: number;
 }
 export interface Kitchen extends KitchenSummary {
+  categories: { id: string; name: string; kind: string; hidden: boolean }[];
   image_id: string;
   description: string;
   can_price: boolean;
@@ -45,7 +70,7 @@ export interface Kitchen extends KitchenSummary {
 }
 export interface Selection {
   people: number;
-  items: { dish_id: string; quantity: number }[];
+  items: SelectionItem[];
   note: string;
   revision: number;
 }
@@ -93,6 +118,7 @@ export interface Meal extends MealSummary {
   };
 }
 export interface Profile {
+  display_id: string;
   name: string;
   kitchens: KitchenSummary[];
   limits: Record<string, number>;

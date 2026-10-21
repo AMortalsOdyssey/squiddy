@@ -8,12 +8,24 @@ const categoryNames = {
 };
 function dishView(d) {
   return {
+    subtitle: d.subtitle || "",
+    source_url: d.source_url || "",
+    source_label: d.source_label || "",
+    step_title: d.step_title || "跟着这样做",
+    recipe_steps: (d.recipe_steps || []).map((s) => ({ ...s })),
+    variants: (d.variants || []).slice(),
+    attributes: (d.attributes || []).map((a) => ({
+      name: a.name,
+      options: a.options.slice(),
+    })),
+    nutrition: d.nutrition ? { ...d.nutrition } : null,
     default_serves: d.default_serves || 2,
     ingredient_complete: d.ingredient_complete === true,
     id: d.id,
     name: d.name,
     category: d.category,
-    category_name: categoryNames[d.category],
+    category_id: d.category_id || d.category,
+    category_name: d.category_name || categoryNames[d.category],
     ingredients: d.ingredients.slice(),
     steps: d.steps,
     minutes: d.minutes,

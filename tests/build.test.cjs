@@ -61,6 +61,15 @@ test("云模式构建在隔离目录排除演练引擎，缺环境配置则失�
       /cloud/,
     );
     const appRoot = path.join(dir, "miniprogram");
+    const parser = require(path.join(appRoot, "services/import-recipe.js"));
+    assert.equal(
+      parser.parseRecipeText("香菇鸡丁\n食材：鸡肉、香菇\n做法：炒熟").name,
+      "香菇鸡丁",
+    );
+    assert.match(
+      fs.readFileSync(path.join(appRoot, "pages/import/index.js"), "utf8"),
+      /require\(["']\.\.\/\.\.\/services\/import-recipe["']\)/,
+    );
     const before = fs.statSync(appRoot).ino;
     const appFile = path.join(appRoot, "app.json");
     const appBefore = fs.statSync(appFile).ino;

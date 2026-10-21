@@ -303,7 +303,10 @@ function makeRuntime({
         let referenced = k?.image_id === id;
         for (const did of k?.dish_ids || []) {
           const d = await tx.get("dishes", did);
-          if (d?.image_id === id) {
+          if (
+            d?.image_id === id ||
+            d?.recipe_steps?.some((s) => s.image_id === id)
+          ) {
             referenced = true;
             break;
           }
@@ -311,7 +314,13 @@ function makeRuntime({
         if (!referenced)
           for (const mid of k?.meal_ids || []) {
             const m = await tx.get("meals", mid);
-            if (m?.menu.some((d) => d.image_id === id)) {
+            if (
+              m?.menu.some(
+                (d) =>
+                  d.image_id === id ||
+                  d.recipe_steps?.some((s) => s.image_id === id),
+              )
+            ) {
               referenced = true;
               break;
             }

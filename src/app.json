@@ -11,7 +11,11 @@
     "pages/settings/index",
     "pages/poster/index",
     "pages/dish/index",
-    "pages/history/index"
+    "pages/history/index",
+    "pages/categories/index",
+    "pages/library/index",
+    "pages/about/index",
+    "pages/import/index"
   ],
   "window": {
     "navigationBarTitleText": "鱿鱼须须",
