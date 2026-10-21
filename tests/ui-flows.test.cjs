@@ -326,10 +326,129 @@ test("丰富菜谱页面贯通：导入预览、分步规格营养编辑、点�
   const menu = page("menu");
   await menu.refresh();
   menu.change(event({ id: d.id, delta: 1 }));
-  assert.equal(api.loadSelection(published.id).items[0].variant, "大份");
-  assert.equal(
-    api.loadSelection(published.id).items[0].options[0].value,
-    "微辣",
-  );
+  assert.equal(api.loadSelection(published.id), null);
+  const preserved = (await api.meal(published.id)).selection;
+  assert.equal(preserved.items[0].variant, "大份");
+  assert.equal(preserved.items[0].options[0].value, "微辣");
   cart.onHide?.();
+});
+test("多规格前端保留两种组合，菜单统计合计、逐项提交并贯通购物与反馈", async () => {
+  local.selectActor("chef");
+  const k = await api.kitchen();
+  const d = k.dishes.find((d) => d.variants?.length === 2);
+  assert.ok(d);
+  const pub = await api.mutate("meal.publish", {
+    kitchen_id: k.id,
+    title: "多规格购物与饭后反馈",
+    dish_ids: [d.id],
+    scheduled_at: Date.now() + 7200000,
+    cutoff_at: Date.now() + 3600000,
+  });
+  api.chooseMeal(pub.id);
+  const detail = page("dish");
+  await detail.onLoad({ id: d.id });
+  detail.change(event({ delta: 1 }));
+  detail.variant({ detail: { value: "1" } });
+  detail.change(event({ delta: 1 }));
+  assert.equal(detail.data.chosen.length, 2);
+  assert.equal(detail.data.totalQuantity, 2);
+  detail.variant({ detail: { value: "0" } });
+  assert.equal(detail.data.quantity, 1);
+  const menu = page("menu");
+  await menu.refresh();
+  assert.equal(menu.data.dishes[0].quantity, 2);
+  assert.equal(menu.data.count, 1);
+  const cart = page("meal");
+  await cart.refresh();
+  assert.equal(cart.data.draft.length, 2);
+  await cart.submit();
+  await cart.action(event({ action: "meal.lock" }));
+  await cart.confirmPlan();
+  assert.equal(cart.data.meal.items.length, 2);
+  assert.equal(new Set(cart.data.meal.items.map((i) => i.line_id)).size, 2);
+  const shopping = page("shopping");
+  await shopping.refresh();
+  await shopping.generate();
+  assert.equal(shopping.data.list.items.length, d.ingredients.length);
+  assert.equal(shopping.data.list.items[0].sources.length, 2);
+  shopping.add();
+  shopping.setData({ name: "纸巾", amount: "1包", note: "一起带来" });
+  await shopping.save();
+  const added = shopping.data.list.items.find((i) => i.name === "纸巾");
+  assert.ok(added);
+  await shopping.check(event({ id: added.id }));
+  assert.equal(
+    shopping.data.list.items.find((i) => i.id === added.id).checked,
+    true,
+  );
+  for (const row of cart.data.meal.items) {
+    await cart.transition(
+      event({ id: row.dish_id, line: row.line_id, status: "cooking" }),
+    );
+    await cart.transition(
+      event({ id: row.dish_id, line: row.line_id, status: "served" }),
+    );
+  }
+  assert.equal(cart.data.meal.status, "completed");
+  const review = page("review");
+  await review.refresh();
+  assert.equal(review.data.rows.length, 2);
+  review.tag(event({ index: 1, tag: 0 }));
+  review.input({ ...event({}), detail: { value: "谢谢掌勺的人" } });
+  await review.save();
+  assert.equal(review.data.review.own.note, "谢谢掌勺的人");
+  assert.equal(
+    review.data.review.own.items[0].line_id,
+    review.data.rows[1].line_id,
+  );
+  assert.equal(review.data.review.feedback.length, 1);
+  review.onHide();
+  assert.equal(review.data.note, "");
+  cart.onHide();
+});
+test("公开分享卡片与受邀加入卡片分别路由，不混入邀请凭据", () => {
+  const p = page("meal");
+  p.setData({
+    publicShareId: "public123",
+    inviteToken: "private-token-only",
+    meal: { title: "周末一桌饭" },
+  });
+  assert.equal(
+    p.onShareAppMessage({ target: { dataset: { share: "public" } } }).path,
+    "/pages/meal/index?share=public123",
+  );
+  assert.ok(
+    !p
+      .onShareAppMessage({ target: { dataset: { share: "public" } } })
+      .path.includes("private-token"),
+  );
+  assert.equal(
+    p.onShareAppMessage({ target: { dataset: {} } }).path,
+    "/pages/invite/index?token=private-token-only",
+  );
+});
+test("离开购物或反馈页面后，较晚返回的请求不能重新填回私有内容", async () => {
+  const original = api.call;
+  try {
+    for (const name of ["shopping", "review"]) {
+      let resume;
+      const held = new Promise((resolve) => {
+        resume = resolve;
+      });
+      api.call = async (...args) => {
+        const result = await original(...args);
+        await held;
+        return result;
+      };
+      const p = page(name),
+        pending = p.refresh();
+      p.onHide();
+      resume();
+      await pending;
+      assert.equal(p.data[name === "shopping" ? "list" : "review"], null);
+      assert.equal(p.data.note, "");
+    }
+  } finally {
+    api.call = original;
+  }
 });

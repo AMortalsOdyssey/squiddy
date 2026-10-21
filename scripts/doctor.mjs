@@ -27,10 +27,10 @@ console.log(
       cloudConfigured: !!config.cloudEnv,
       verificationBoundary:
         "这里只检查本地文件，不能证明微信登录、云部署或真机成功",
-      awaiting: [
+      separateAcceptance: [
         ...(!realAppIdConfigured ? ["个人小程序注册与真实AppID"] : []),
         "云端部署与安全规则的独立验收（doctor不检查）",
-        "双机三账号验收",
+        "真实手机与多微信账号验收（是否开展由本次任务范围决定）",
       ],
     },
     null,

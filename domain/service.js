@@ -15,7 +15,22 @@ const { limits, entitlementForKitchen } = require("./entitlements");
 const { categories, validateCategories } = require("./categories");
 const { recipes, findRecipe } = require("./library");
 const { recipeDetails, selectionDetails } = require("./recipe-details");
+const { selectionRows, mealDemand, unitPrice } = require("./demand");
+const {
+  lineKey,
+  priceKey,
+  lineLabel,
+  dishQuantity,
+} = require("../shared/selection");
+const {
+  handleTool,
+  shoppingView,
+  reviewView,
+  clearActor,
+  writableTools,
+} = require("./meal-tools");
 const writable = new Set([
+  ...writableTools,
   "feedback.submit",
   "item.undo",
   "kitchen.update",
@@ -126,15 +141,18 @@ function createService({
       role: participant.role,
       menu: meal.menu.map(dishView),
       items: meal.items.map((i) => ({
+        line_id: i.line_id || lineKey(i),
+        ...(i.variant ? { variant: i.variant } : {}),
+        ...(i.options ? { options: i.options } : {}),
         dish_id: i.dish_id,
-        name: i.name,
+        name: lineLabel(i.name, i),
         quantity: i.quantity,
         status: i.status,
         requested_people: i.requested_people,
         reason: i.reason || "",
       })),
       selection: {
-        items: own?.items || [],
+        items: selectionRows(meal.menu, own?.items || []),
         note: own?.note || "",
         people: own?.people || 1,
         revision: own?.revision || 0,
@@ -161,7 +179,7 @@ function createService({
           const user = await tx.get("users", a);
           selections.push({
             name: user?.name || "一位朋友",
-            items: s.items,
+            items: selectionRows(meal.menu, s.items),
             note: s.note,
             people: s.people || 1,
           });
@@ -170,23 +188,14 @@ function createService({
       const quote = await tx.get("meal_prices", mid);
       response.requests = selections;
       response.chef_quote = quoteView(meal, quote, selections);
-      response.chef_prices = meal.menu.map((d) => ({
-        dish_id: d.id,
-        name: d.name,
-        unit_price_minor: quote?.prices[d.id] ?? null,
+      const demand = mealDemand(meal.menu, selections);
+      response.chef_prices = demand.map((r) => ({
+        line_id: r.line_id,
+        dish_id: r.dish_id,
+        name: r.name,
+        unit_price_minor: unitPrice(quote, r),
       }));
-      response.summary = meal.menu.map((d) => ({
-        dish_id: d.id,
-        name: d.name,
-        people: selections
-          .filter((s) => s.items.some((i) => i.dish_id === d.id))
-          .reduce((n, s) => n + s.people, 0),
-        requested_quantity: selections.reduce(
-          (n, s) =>
-            n + (s.items.find((i) => i.dish_id === d.id)?.quantity || 0),
-          0,
-        ),
-      }));
+      response.summary = demand;
     }
     return response;
   }
@@ -287,6 +296,14 @@ function createService({
     }
     // Check human text before a transaction; the production adapter fails closed if moderation is unavailable.
     const textByAction = {
+      "shopping.add": [payload.name, payload.amount, payload.note],
+      "shopping.update": [payload.name, payload.amount, payload.note],
+      "meal.review.save": [
+        payload.note,
+        ...(Array.isArray(payload.items) ? payload.items : []).map(
+          (i) => i?.note,
+        ),
+      ],
       "feedback.submit": [payload.message],
       "item.undo": [payload.reason],
       "item.transition": [payload.reason],
@@ -370,6 +387,7 @@ function createService({
             "meal.archive",
             "share.create",
             "item.undo",
+            "shopping.generate",
           ].includes(action),
         );
       else if (payload.kitchen_id && action !== "invitation.accept")
@@ -410,6 +428,26 @@ function createService({
       }
       let result;
       switch (action) {
+        case "shopping.read":
+        case "shopping.generate":
+        case "shopping.add":
+        case "shopping.update":
+        case "shopping.check":
+        case "shopping.claim":
+        case "shopping.remove":
+        case "meal.review.read":
+        case "meal.review.save": {
+          const { meal: m } = await mealAccess(tx, payload.meal_id, actor);
+          result = await handleTool(action, payload, {
+            m,
+            actor,
+            tx,
+            now,
+            newId,
+            hash: crypto.hash,
+          });
+          break;
+        }
         case "library.read": {
           keys(payload, ["request_id", "kitchen_id"]);
           const access = payload.kitchen_id
@@ -612,7 +650,11 @@ function createService({
           );
           const reason = text(payload.reason, 100, "撤销原因"),
             last = m.last_transition,
-            item = m.items.find((i) => i.dish_id === last.dish_id);
+            item = m.items.find((i) =>
+              last.line_id
+                ? (i.line_id || lineKey(i)) === last.line_id
+                : i.dish_id === last.dish_id,
+            );
           ensure(item, "INVALID_STATE", "菜品状态已变化");
           item.status = last.previous_status;
           item.reason = last.previous_reason;
@@ -714,6 +756,9 @@ function createService({
             if (member.cook_access === true || member.role === "cook") {
               const p = await tx.get("dish_prices", did);
               item.default_price_minor = p?.value ?? null;
+              item.default_variant_prices = (p?.variants || []).map((v) => ({
+                ...v,
+              }));
             }
             if (d.active || member.role !== "member") dishes.push(item);
           }
@@ -847,6 +892,7 @@ function createService({
             "variants",
             "attributes",
             "nutrition",
+            "variant_prices",
           ]);
           const did = payload.dish_id ? id(payload.dish_id) : newId();
           const old = payload.dish_id ? await load(tx, "dishes", did) : null;
@@ -928,6 +974,11 @@ function createService({
             "FORBIDDEN",
             "只有厨房厨师可以修改内部价格",
           );
+          ensure(
+            canPrice || payload.variant_prices === undefined,
+            "FORBIDDEN",
+            "只有厨房厨师可以修改内部价格",
+          );
           await tx.put("dishes", did, d);
           if (canPrice) {
             const price =
@@ -935,7 +986,35 @@ function createService({
                 ? ((await tx.get("dish_prices", did))?.value ?? null)
                 : (payload.default_price_minor ?? null);
             if (price !== null) integer(price, 0, 9999999, "内部参考价");
+            const variantPrices =
+              payload.variant_prices === undefined
+                ? (await tx.get("dish_prices", did))?.variants || []
+                : payload.variant_prices;
+            input(
+              Array.isArray(variantPrices) && variantPrices.length <= 8,
+              "规格参考价最多8项",
+            );
+            const seenVariants = new Set();
+            const vp = variantPrices
+              .filter((v) => d.variants.includes(v.variant))
+              .map((v) => {
+                keys(v, ["variant", "unit_price_minor"]);
+                input(!seenVariants.has(v.variant), "规格参考价不可重复");
+                seenVariants.add(v.variant);
+                if (v.unit_price_minor !== null)
+                  integer(v.unit_price_minor, 0, 9999999, "规格参考价");
+                return {
+                  variant: v.variant,
+                  unit_price_minor: v.unit_price_minor,
+                };
+              });
+            input(
+              payload.variant_prices === undefined ||
+                vp.length === variantPrices.length,
+              "规格已变化，请核对参考价",
+            );
             await tx.put("dish_prices", did, {
+              variants: vp,
               kitchen_id: k.id,
               value: price,
               revision: d.revision,
@@ -1001,7 +1080,12 @@ function createService({
               "包含不可用的菜品",
             );
             menu.push(dishView(d));
-            prices[did] = (await tx.get("dish_prices", did))?.value ?? null;
+            const price = await tx.get("dish_prices", did);
+            prices[did] = price?.value ?? null;
+            for (const v of price?.variants || [])
+              if (d.variants?.includes(v.variant))
+                prices[priceKey({ dish_id: did, variant: v.variant })] =
+                  v.unit_price_minor;
           }
           const m = {
             id: mid,
@@ -1209,27 +1293,41 @@ function createService({
             "点菜已截止，草稿仍保留在本机",
           );
           input(
-            Array.isArray(payload.items) && payload.items.length <= limits.menu,
+            Array.isArray(payload.items) &&
+              payload.items.length <= limits.selection_lines,
           );
           const selected = new Set();
           const items = payload.items.map((i) => {
-            keys(i, ["dish_id", "quantity", "variant", "options"]);
+            keys(i, ["dish_id", "quantity", "variant", "options", "line_id"]);
             id(i.dish_id);
-            input(!selected.has(i.dish_id), "菜品重复");
-            selected.add(i.dish_id);
-            input(
-              m.menu.some((d) => d.id === i.dish_id && d.active),
-              "菜品已下架，请调整选择",
-            );
-            return {
+            const d = m.menu.find((d) => d.id === i.dish_id && d.active);
+            input(d, "菜品已下架，请调整选择");
+            const row = {
               dish_id: i.dish_id,
               quantity: integer(i.quantity, 1, 20, "请求份数"),
-              ...selectionDetails(
-                i,
-                m.menu.find((d) => d.id === i.dish_id),
-              ),
+              ...selectionDetails(i, d),
             };
+            const lid = lineKey(row);
+            input(!i.line_id || i.line_id === lid, "规格组合编号已变化");
+            input(!selected.has(lid), "规格组合重复");
+            selected.add(lid);
+            return { ...row, line_id: lid };
           });
+          for (const did of new Set(items.map((i) => i.dish_id)))
+            input(dishQuantity(items, did) <= 20, "同一道菜的合计请求最多20份");
+          const globalLines = new Set(items.map((i) => i.line_id));
+          for (const a of m.participant_ids) {
+            if (a === actor) continue;
+            const p = await tx.get("meal_memberships", participantKey(m.id, a));
+            if (p?.status !== "active") continue;
+            const s = await tx.get("selections", key(m.id, a));
+            for (const i of selectionRows(m.menu, s?.items || []))
+              globalLines.add(i.line_id);
+          }
+          input(
+            globalLines.size <= limits.meal_lines,
+            "本餐规格组合已达80项，请与厨师确认后调整",
+          );
           const sid = key(m.id, actor),
             old = await tx.get("selections", sid);
           revision(payload.expected_revision, old?.revision || 0);
@@ -1319,39 +1417,70 @@ function createService({
             "请先锁单，且制作计划只能确认一次",
           );
           input(
-            Array.isArray(payload.items) && payload.items.length <= limits.menu,
+            Array.isArray(payload.items) &&
+              payload.items.length <= limits.meal_lines,
           );
-          const seen = new Set(),
-            requested = {};
+          const requests = [];
           for (const a of m.participant_ids) {
             const p = await tx.get("meal_memberships", participantKey(m.id, a));
             if (p?.status !== "active") continue;
-            const s = await tx.get("selections", key(m.id, a));
-            for (const i of s?.items || [])
-              requested[i.dish_id] =
-                (requested[i.dish_id] || 0) + (s.people || 1);
+            const r = await tx.get("selections", key(m.id, a));
+            if (r) requests.push(r);
           }
+          const demand = mealDemand(m.menu, requests),
+            seen = new Set();
           const items = payload.items.map((i) => {
-            keys(i, ["dish_id", "quantity", "reason"]);
-            input(!seen.has(i.dish_id));
-            seen.add(i.dish_id);
+            keys(i, [
+              "dish_id",
+              "line_id",
+              "variant",
+              "options",
+              "quantity",
+              "reason",
+            ]);
             const d = m.menu.find((d) => d.id === i.dish_id);
             input(d, "菜品不在菜单");
+            let row;
+            if (i.line_id)
+              row = demand.find(
+                (r) => r.line_id === i.line_id && r.dish_id === i.dish_id,
+              );
+            else {
+              const matches = demand.filter((r) => r.dish_id === i.dish_id);
+              input(
+                matches.length === 1,
+                "同菜有多种规格，请使用新版制作计划逐项确认",
+              );
+              row = matches[0];
+            }
+            input(row, "规格组合不在需求列表");
+            input(!seen.has(row.line_id), "制作规格组合重复");
+            seen.add(row.line_id);
             const q = integer(i.quantity, 0, 20, "制作份数");
             input(d.active || q === 0, "已下架菜品请明确不做");
             return {
+              line_id: row.line_id,
               dish_id: d.id,
+              ...(row.variant ? { variant: row.variant } : {}),
+              ...(row.options ? { options: row.options } : {}),
               name: d.name,
               quantity: q,
               reason: q === 0 ? text(i.reason, 100, "不做原因") : "",
               status: q === 0 ? "skipped" : "planned",
-              requested_people: requested[d.id] || 0,
+              requested_people: row.people || 0,
             };
           });
           input(
-            Object.keys(requested).every((did) => seen.has(did)),
-            "请为每道有人点的菜填写份数，或填0明确不做",
+            demand
+              .filter((r) => r.requested_quantity > 0)
+              .every((r) => seen.has(r.line_id)),
+            "请为每个有人点的规格填写份数，或填0明确不做",
           );
+          for (const did of new Set(items.map((i) => i.dish_id)))
+            input(
+              dishQuantity(items, did) <= 20,
+              "同一道菜的实际制作合计最多20份",
+            );
           input(items.length > 0, "请填写制作计划");
           m.items = items;
           m.plan_confirmed = true;
@@ -1375,7 +1504,15 @@ function createService({
             "INVALID_STATE",
             "当前不能更新制作进度",
           );
-          const item = m.items.find((i) => i.dish_id === payload.dish_id);
+          const matches = m.items.filter((i) => i.dish_id === payload.dish_id);
+          input(
+            payload.line_id || matches.length === 1,
+            "请按规格更新制作进度",
+          );
+          const item = matches.find(
+            (i) =>
+              !payload.line_id || (i.line_id || lineKey(i)) === payload.line_id,
+          );
           input(item, "菜品不在制作计划");
           const allowed = {
             planned: ["cooking", "skipped"],
@@ -1389,6 +1526,7 @@ function createService({
             "不允许这样更改制作进度",
           );
           m.last_transition = {
+            line_id: item.line_id || lineKey(item),
             dish_id: item.dish_id,
             previous_status: item.status,
             previous_meal_status: m.status,
@@ -1449,7 +1587,26 @@ function createService({
           );
           const price = payload.unit_price_minor;
           if (price !== null) integer(price, 0, 9999999, "内部参考价");
-          q.prices[payload.dish_id] = price;
+          let pk = payload.dish_id;
+          if (payload.line_id) {
+            const requests = [];
+            for (const a of m.participant_ids) {
+              const p = await tx.get(
+                "meal_memberships",
+                participantKey(m.id, a),
+              );
+              if (p?.status !== "active") continue;
+              const s = await tx.get("selections", key(m.id, a));
+              if (s) requests.push(s);
+            }
+            const row = mealDemand(m.menu, requests).find(
+              (r) =>
+                r.line_id === payload.line_id && r.dish_id === payload.dish_id,
+            );
+            input(row, "规格组合已变化，请刷新");
+            pk = row.line_id;
+          }
+          q.prices[pk] = price;
           q.revision++;
           await tx.put("meal_prices", m.id, q);
           result = { revision: q.revision };
@@ -1587,6 +1744,7 @@ function createService({
               p.status = "revoked";
               await tx.put("meal_memberships", participantKey(mid, target), p);
             }
+            clearActor(m, target);
             m.participant_ids = m.participant_ids.filter((a) => a !== target);
             m.revision++;
             await tx.put("meals", mid, m);
@@ -1676,6 +1834,7 @@ function createService({
             for (const mid of k.meal_ids) {
               const m = await tx.get("meals", mid);
               if (m) {
+                clearActor(m, actor);
                 m.participant_ids = m.participant_ids.filter(
                   (a) => a !== actor,
                 );
@@ -1725,8 +1884,14 @@ function createService({
                 "meal_memberships",
                 participantKey(mid, actor),
               );
-              if (p?.status === "active")
-                meals.push(await readMeal(tx, mid, actor));
+              if (p?.status === "active") {
+                const m = await tx.get("meals", mid);
+                meals.push({
+                  ...(await readMeal(tx, mid, actor)),
+                  shopping: await shoppingView(m, actor, tx, crypto.hash),
+                  own_review: (await reviewView(m, actor, tx)).own,
+                });
+              }
             }
             kitchens.push({ name: k.name, role: member.role, meals });
           }

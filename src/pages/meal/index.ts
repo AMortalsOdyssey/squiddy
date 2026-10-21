@@ -1,3 +1,4 @@
+const { lineKey } = require("../../shared/selection");
 import {
   meal,
   currentMeal,
@@ -208,6 +209,7 @@ Page({
         cutoff: dateLabel(m.cutoff_at),
         draft: draft.items.map((i) => ({
           ...i,
+          line_id: lineKey(i),
           name:
             (m.menu.find((d) => d.id === i.dish_id)?.name || "已不可用菜品") +
             ([
@@ -238,17 +240,17 @@ Page({
           m.role === "cook"
             ? (m.chef_prices || []).map((p) => ({
                 ...p,
-                value: oldPrices.find((x) => x.dish_id === p.dish_id)?.dirty
-                  ? oldPrices.find((x) => x.dish_id === p.dish_id).value
+                value: oldPrices.find((x) => x.line_id === p.line_id)?.dirty
+                  ? oldPrices.find((x) => x.line_id === p.line_id).value
                   : p.unit_price_minor == null
                     ? ""
                     : money(p.unit_price_minor),
-                dirty: !!oldPrices.find((x) => x.dish_id === p.dish_id)?.dirty,
-                conflict: !!oldPrices.find((x) => x.dish_id === p.dish_id)
+                dirty: !!oldPrices.find((x) => x.line_id === p.line_id)?.dirty,
+                conflict: !!oldPrices.find((x) => x.line_id === p.line_id)
                   ?.conflict,
-                expectedRevision: oldPrices.find((x) => x.dish_id === p.dish_id)
+                expectedRevision: oldPrices.find((x) => x.line_id === p.line_id)
                   ?.dirty
-                  ? oldPrices.find((x) => x.dish_id === p.dish_id)
+                  ? oldPrices.find((x) => x.line_id === p.line_id)
                       .expectedRevision
                   : m.chef_quote?.revision,
               }))
@@ -353,6 +355,7 @@ Page({
     )
       return saveSelection(m.id, {
         items: this.data.draft.map((i) => ({
+          line_id: i.line_id || lineKey(i),
           dish_id: i.dish_id,
           quantity: i.quantity,
           ...(i.variant ? { variant: i.variant } : {}),
@@ -387,6 +390,7 @@ Page({
       await mutate("selection.replace", {
         meal_id: m.id,
         items: this.data.draft.map((i) => ({
+          line_id: i.line_id || lineKey(i),
           dish_id: i.dish_id,
           quantity: i.quantity,
           ...(i.variant ? { variant: i.variant } : {}),
@@ -410,6 +414,23 @@ Page({
   },
   back() {
     wx.switchTab({ url: "/pages/menu/index" });
+  },
+  shopping() {
+    wx.navigateTo({ url: "/pages/shopping/index" });
+  },
+  feedback() {
+    wx.navigateTo({ url: "/pages/review/index" });
+  },
+  editLine(e: WechatMiniprogram.TouchEvent) {
+    const i = this.data.draft[Number(e.currentTarget.dataset.index)];
+    if (i)
+      wx.navigateTo({
+        url:
+          "/pages/dish/index?id=" +
+          i.dish_id +
+          "&line=" +
+          encodeURIComponent(i.line_id),
+      });
   },
   manage() {
     wx.navigateTo({ url: "/pages/kitchen/index" });
@@ -476,6 +497,7 @@ Page({
           reason = r.content || "";
         }
         items.push({
+          line_id: i.line_id || lineKey(i),
           dish_id: i.dish_id,
           quantity: Number(i.quantity),
           reason,
@@ -496,7 +518,7 @@ Page({
   async transition(e: WechatMiniprogram.TouchEvent) {
     const m = this.data.meal;
     if (!m || this.data.busy) return;
-    const { id, status } = e.currentTarget.dataset;
+    const { id, line, status } = e.currentTarget.dataset;
     let reason = "";
     if (status === "skipped") {
       const r = await wx.showModal({
@@ -513,6 +535,7 @@ Page({
       await mutate("item.transition", {
         meal_id: m.id,
         dish_id: id,
+        line_id: line,
         status,
         reason,
         expected_revision: m.revision,
@@ -547,6 +570,7 @@ Page({
       await mutate("price.update", {
         meal_id: m.id,
         dish_id: p.dish_id,
+        line_id: p.line_id,
         unit_price_minor: parseMoney(p.value),
         expected_revision: p.expectedRevision ?? m.chef_quote.revision,
       });
@@ -567,9 +591,9 @@ Page({
     await this.refresh(true);
     const m = this.data.meal;
     if (m?.role !== "cook") return;
-    const latest = m.chef_prices?.find((p) => p.dish_id === old.dish_id);
+    const latest = m.chef_prices?.find((p) => p.line_id === old.line_id);
     if (!latest) return;
-    const index = this.data.prices.findIndex((p) => p.dish_id === old.dish_id);
+    const index = this.data.prices.findIndex((p) => p.line_id === old.line_id);
     if (index < 0) return;
     this.setData({
       ["prices[" + index + "].value"]:
@@ -671,7 +695,12 @@ Page({
       failure(e);
     }
   },
-  onShareAppMessage() {
+  onShareAppMessage(e: any) {
+    if (e?.target?.dataset?.share === "public" && this.data.publicShareId)
+      return {
+        title: this.data.meal?.title || "一桌好饭",
+        path: "/pages/meal/index?share=" + this.data.publicShareId,
+      };
     return this.data.inviteToken
       ? {
           title: this.data.meal?.title || "一起来点菜",

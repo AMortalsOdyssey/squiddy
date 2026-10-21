@@ -1,4 +1,6 @@
 "use strict";
+const { mealDemand, unitPrice } = require("./demand");
+const { lineKey } = require("../shared/selection");
 const categoryNames = {
   protein: "荤菜",
   vegetable: "素菜",
@@ -56,23 +58,20 @@ function quoteView(m, quote, requests = []) {
     unknown = 0;
   const items = m.plan_confirmed
     ? m.items
-    : m.menu.map((d) => ({
-        dish_id: d.id,
-        quantity: requests.reduce(
-          (sum, s) =>
-            sum + (s.items.find((i) => i.dish_id === d.id)?.quantity || 0),
-          0,
-        ),
+    : mealDemand(m.menu, requests, false).map((r) => ({
+        ...r,
+        quantity: r.requested_quantity,
         status: "planned",
       }));
   const lines = items
     .filter((x) => x.status !== "skipped" && x.quantity > 0)
     .map((item) => {
-      const p = quote?.prices[item.dish_id] ?? null;
+      const p = unitPrice(quote, item);
       const subtotal = p === null ? null : p * item.quantity;
       if (subtotal === null) unknown++;
       else total += subtotal;
       return {
+        line_id: item.line_id || lineKey(item),
         dish_id: item.dish_id,
         unit_price_minor: p,
         subtotal_minor: subtotal,

@@ -145,6 +145,38 @@ test("审核回调早到可留存，maintenance在trace提交后应用", async (
   assert.equal(r.store.snapshot().media.image1.status, "approved");
   assert.equal(Object.keys(r.store.snapshot().media_callbacks).length, 0);
 });
+test("真实wx_callback上下文可携带OPENID，客户端和跨应用仍不能伪造", async () => {
+  const r = runtime({ env: { SQUIDDY_CALLBACK_SOURCE: "wx_callback" } });
+  const e = {
+    appid: APP,
+    Event: "wxa_media_check",
+    MsgType: "event",
+    trace_id: "sdk-callback",
+    errcode: 0,
+    result: { suggest: "pass" },
+  };
+  await r.callback(e, {
+    APPID: APP,
+    SOURCE: "wx_callback",
+    OPENID: "platform-sender",
+  });
+  assert.ok(r.store.snapshot().media_callbacks["sdk-callback"]);
+  for (const c of [
+    { APPID: APP, SOURCE: "wx_client", OPENID: "platform-sender" },
+    { APPID: APP, SOURCE: "wx_client,wx_callback", OPENID: "platform-sender" },
+    {
+      APPID: APP,
+      SOURCE: "wx_callback",
+      OPENID: "platform-sender",
+      FROM_APPID: "other",
+    },
+    { APPID: "other", SOURCE: "wx_callback", OPENID: "platform-sender" },
+  ])
+    await assert.rejects(
+      r.callback(e, c),
+      (error) => error.code === "FORBIDDEN",
+    );
+});
 test("云图片先鉴权，再重编码；JPEG输出无EXIF，不直传原文件", async () => {
   const r = runtime({
     env: {
@@ -234,6 +266,63 @@ test("图片审核未配置时拒绝云上传，不假装通过", async () => {
   );
   assert.equal(out.error.code, "NOT_CONFIGURED");
   assert.equal(count, 0);
+});
+test("图片内容经已审核与厨房鉴权后读取，待审和外部用户无法下载私有文件", async () => {
+  const f = await setup(),
+    r = runtime({ store: f.store });
+  await f.store.transaction(async (tx) => {
+    await tx.put("media", "approved-render", {
+      id: "approved-render",
+      kitchen_id: f.kid,
+      actor: f.crypt.hash(APP + ":chef"),
+      status: "approved",
+      file_id: "cloud://private/image.jpg",
+    });
+    await tx.put("media", "pending-render", {
+      id: "pending-render",
+      kitchen_id: f.kid,
+      actor: f.crypt.hash(APP + ":chef"),
+      status: "pending",
+      file_id: "cloud://private/pending.jpg",
+    });
+  });
+  let downloads = 0;
+  r.cloud.downloadFile = async () => {
+    downloads++;
+    return { fileContent: Buffer.from([255, 216, 255, 217]) };
+  };
+  const result = await r.api(
+    { action: "media.content", payload: { media_id: "approved-render" } },
+    ctx,
+  );
+  assert.equal(result.type, "jpeg");
+  assert.equal(
+    result.base64,
+    Buffer.from([255, 216, 255, 217]).toString("base64"),
+  );
+  await assert.rejects(
+    r.api(
+      { action: "media.content", payload: { media_id: "pending-render" } },
+      ctx,
+    ),
+  );
+  await assert.rejects(
+    r.api(
+      { action: "media.content", payload: { media_id: "approved-render" } },
+      { ...ctx, OPENID: "outsider" },
+    ),
+  );
+  assert.equal(downloads, 1);
+  r.cloud.downloadFile = async () => ({
+    fileContent: Buffer.alloc(512 * 1024 + 1),
+  });
+  await assert.rejects(
+    r.api(
+      { action: "media.content", payload: { media_id: "approved-render" } },
+      ctx,
+    ),
+    (e) => e.code === "UNAVAILABLE",
+  );
 });
 test("重试事务不重复调用图片外部审核；同请求重放只上传一次", async () => {
   const f = fixture();
@@ -402,4 +491,107 @@ test("保留菜谱和已发布快照引用的步骤图片，只清理无引用�
   assert.ok(media["live-step"]);
   assert.ok(media["snapshot-step"]);
   assert.equal(media["unused-step"], undefined);
+});
+test("开发版小程序码关闭发布页校验，消息跳转版本与正式版分开配置", async () => {
+  const f = await setup();
+  const share = await f.call("chef", "share.create", { meal_id: f.mid });
+  const r = runtime({
+    store: f.store,
+    env: { SQUIDDY_POSTER_ENABLED: "true", SQUIDDY_CODE_ENV: "develop" },
+  });
+  let params;
+  r.cloud.openapi.wxacode = {
+    getUnlimited: async (p) => {
+      params = p;
+      return { buffer: Buffer.from("PNG-test-only") };
+    },
+  };
+  await r.api({ action: "poster.code", payload: { share_id: share.id } }, ctx);
+  assert.equal(params.checkPath, false);
+  assert.equal(params.envVersion, "develop");
+  const invalid = runtime({
+    store: f.store,
+    env: { SQUIDDY_POSTER_ENABLED: "true", SQUIDDY_CODE_ENV: "guess" },
+  });
+  await assert.rejects(
+    invalid.api(
+      { action: "poster.code", payload: { share_id: share.id } },
+      ctx,
+    ),
+    (e) => e.code === "INVALID_INPUT",
+  );
+});
+test("审核回调来源观测不放行未验证来源，也不保存发送者身份或图片内容", async () => {
+  const r = runtime({ env: { SQUIDDY_CALLBACK_SOURCE: "pending-discovery" } });
+  const event = {
+    appid: APP,
+    Event: "wxa_media_check",
+    MsgType: "event",
+    trace_id: "trace-real-route",
+    result: { suggest: "pass" },
+    private_payload: "must-not-persist",
+  };
+  await assert.rejects(
+    r.callback(event, {
+      APPID: APP,
+      SOURCE: "wx_platform_test",
+      OPENID: "sender-secret",
+    }),
+    (e) => e.code === "FORBIDDEN",
+  );
+  const observations = Object.values(r.store.snapshot().audit_events);
+  assert.equal(observations.length, 1);
+  assert.equal(observations[0].source, "wx_platform_test");
+  assert.equal(observations[0].has_openid, true);
+  assert.ok(!JSON.stringify(observations).includes("sender-secret"));
+  assert.ok(!JSON.stringify(observations).includes("must-not-persist"));
+  await assert.rejects(
+    r.callback(event, {
+      APPID: APP,
+      SOURCE: "wx_client",
+      OPENID: "sender-secret",
+    }),
+    (e) => e.code === "FORBIDDEN",
+  );
+  assert.equal(Object.values(r.store.snapshot().audit_events).length, 2);
+  assert.ok(!r.store.snapshot().media_callbacks);
+});
+test("平台接入检查只读且限制厨房主人，过滤模板检查的无关字段", async () => {
+  const f = await setup(),
+    r = runtime({ store: f.store });
+  let count = 0;
+  r.cloud.openapi.subscribeMessage.getTemplateList = async () => {
+    count++;
+    return {
+      errCode: 0,
+      data: [
+        {
+          priTmplId: "template-test",
+          title: "开饭提醒",
+          content: "菜名{{thing1.DATA}}",
+          secret: "never-return",
+        },
+      ],
+    };
+  };
+  r.cloud.openapi.subscribeMessage.getCategory = async () => ({
+    errCode: 0,
+    data: [{ id: 1, name: "工具", secret: "never-return" }],
+  });
+  await assert.rejects(
+    r.api(
+      { action: "platform.inspect", payload: { kitchen_id: f.kid } },
+      { ...ctx, OPENID: "alice" },
+    ),
+    (e) => e.code === "FORBIDDEN",
+  );
+  assert.equal(count, 0);
+  const data = await r.api(
+    { action: "platform.inspect", payload: { kitchen_id: f.kid } },
+    ctx,
+  );
+  assert.equal(count, 1);
+  assert.equal(data.templates.data[0].priTmplId, "template-test");
+  assert.ok(!JSON.stringify(data).includes("never-return"));
+  assert.equal(data.categories.data[0].name, "工具");
 });

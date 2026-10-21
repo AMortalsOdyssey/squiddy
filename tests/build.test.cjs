@@ -11,6 +11,7 @@ test("云模式构建在隔离目录排除演练引擎，缺环境配置则失�
     for (const name of [
       "src",
       "domain",
+      "shared",
       "scripts",
       "tsconfig.json",
       "project.config.example.json",

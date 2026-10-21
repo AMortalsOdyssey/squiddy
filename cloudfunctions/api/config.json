@@ -3,7 +3,9 @@
     "openapi": [
       "security.msgSecCheck",
       "security.mediaCheckAsync",
-      "wxacode.getUnlimited"
+      "wxacode.getUnlimited",
+      "subscribeMessage.getTemplateList",
+      "subscribeMessage.getCategory"
     ]
   }
 }

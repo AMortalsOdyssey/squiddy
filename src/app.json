@@ -15,7 +15,9 @@
     "pages/categories/index",
     "pages/library/index",
     "pages/about/index",
-    "pages/import/index"
+    "pages/import/index",
+    "pages/shopping/index",
+    "pages/review/index"
   ],
   "window": {
     "navigationBarTitleText": "鱿鱼须须",

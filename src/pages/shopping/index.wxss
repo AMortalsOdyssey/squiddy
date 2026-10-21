@@ -1,0 +1,49 @@
+.actions {
+  margin: 20rpx 0;
+  flex-wrap: wrap;
+}
+.actions button {
+  flex: 1;
+}
+.page .purchase .check-button {
+  flex: 0 0 88rpx;
+  width: 88rpx;
+  min-width: 44px;
+  height: 88rpx;
+  min-height: 44px;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: #244b3b;
+  border-radius: 0;
+}
+.check-symbol {
+  display: block;
+  width: 52rpx;
+  height: 52rpx;
+  line-height: 52rpx;
+  text-align: center;
+  border-radius: 50%;
+  background: rgba(36, 75, 59, 0.08);
+  font-size: 34rpx;
+}
+
+.purchased .dish-name {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+.purchase-note {
+  margin: 12rpx 0;
+}
+.source {
+  font-size: 22rpx;
+  margin-top: 6rpx;
+}
+.purchase-actions {
+  margin-top: 16rpx;
+  gap: 12rpx;
+  flex-wrap: wrap;
+}

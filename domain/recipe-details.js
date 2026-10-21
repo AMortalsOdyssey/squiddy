@@ -80,7 +80,7 @@ function recipeDetails(p, old = {}) {
   };
 }
 function selectionDetails(i, d) {
-  const variant = i.variant || "",
+  const variant = i.variant || d.variants?.[0] || "",
     options = i.options || [];
   input(
     typeof variant === "string" &&
@@ -102,9 +102,16 @@ function selectionDetails(i, d) {
     );
     seen.add(a.name);
   }
+  const complete = (d.attributes || []).map(
+    (g) =>
+      options.find((o) => o.name === g.name) || {
+        name: g.name,
+        value: g.options[0],
+      },
+  );
   return {
     ...(variant ? { variant } : {}),
-    ...(options.length ? { options: options.map((a) => ({ ...a })) } : {}),
+    ...(complete.length ? { options: complete.map((a) => ({ ...a })) } : {}),
   };
 }
 module.exports = { recipeDetails, selectionDetails };

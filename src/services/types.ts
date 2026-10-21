@@ -1,4 +1,5 @@
 export interface SelectionItem {
+  line_id?: string;
   dish_id: string;
   quantity: number;
   variant?: string;
@@ -40,6 +41,10 @@ export interface Dish {
   active: boolean;
   revision: number;
   default_price_minor?: number | null;
+  default_variant_prices?: {
+    variant: string;
+    unit_price_minor: number | null;
+  }[];
 }
 export interface KitchenSummary {
   id: string;
@@ -80,6 +85,7 @@ export interface Meal extends MealSummary {
   cook_candidates?: { id: string; name: string }[];
   menu: Dish[];
   items: {
+    line_id: string;
     dish_id: string;
     name: string;
     quantity: number;
@@ -96,18 +102,21 @@ export interface Meal extends MealSummary {
     people?: number;
   }[];
   summary?: {
+    line_id: string;
     dish_id: string;
     name: string;
     people: number;
     requested_quantity: number;
   }[];
   chef_prices?: {
+    line_id: string;
     dish_id: string;
     name: string;
     unit_price_minor: number | null;
   }[];
   chef_quote?: {
     lines: {
+      line_id: string;
       dish_id: string;
       unit_price_minor: number | null;
       subtotal_minor: number | null;

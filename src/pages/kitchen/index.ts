@@ -3,6 +3,7 @@ import {
   currentKitchen,
   chooseKitchen,
   mutate,
+  completeMedia,
   call,
   failure,
   isLocal,
@@ -161,6 +162,11 @@ Page({
       const file = pick.tempFiles[0];
       if (file.size > 2 * 1024 * 1024) throw Error("图片请控制在2MB以内");
       const t = await mutate("media.prepare", { kitchen_id: currentKitchen() });
+      this.setData({
+        imageId: t.id,
+        imageStatus: "uploading",
+        imageUrl: file.tempFilePath,
+      });
       const payload: Record<string, unknown> = { media_id: t.id };
       if (isLocal) payload.local_path = file.tempFilePath;
       else
@@ -172,7 +178,7 @@ Page({
             fail: reject,
           }),
         );
-      const r = await mutate("media.complete", payload);
+      const r = await completeMedia(payload);
       this.setData({
         imageId: t.id,
         imageStatus: r.status,

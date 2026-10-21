@@ -37,6 +37,7 @@ try {
     }
   }
   copy("src");
+  fs.cpSync("shared", path.join(output, "shared"), { recursive: true });
   fs.mkdirSync(path.join(output, "config"), { recursive: true });
   fs.writeFileSync(
     path.join(output, "config/runtime.js"),
@@ -80,7 +81,10 @@ try {
   function publish(from, to) {
     fs.mkdirSync(to, { recursive: true });
     const names = new Set(fs.readdirSync(from));
-    for (const name of names) {
+    // Register new page files before publishing app.json to the watching IDE.
+    for (const name of [...names].sort((a, b) =>
+      a === "app.json" ? 1 : b === "app.json" ? -1 : 0,
+    )) {
       const source = path.join(from, name),
         target = path.join(to, name);
       if (fs.statSync(source).isDirectory()) publish(source, target);
@@ -88,7 +92,11 @@ try {
         !fs.existsSync(target) ||
         !fs.readFileSync(target).equals(fs.readFileSync(source))
       )
-        fs.copyFileSync(source, target);
+        if (name === "app.json") {
+          const temporary = target + ".squiddy-tmp";
+          fs.copyFileSync(source, temporary);
+          fs.renameSync(temporary, target);
+        } else fs.copyFileSync(source, target);
     }
     for (const name of fs.readdirSync(to))
       if (!names.has(name))
@@ -103,6 +111,7 @@ for (const name of ["api", "publicRead", "platformCallback", "maintenance"]) {
   if (fs.existsSync(dir)) {
     fs.cpSync("domain", dir + "/domain", { recursive: true });
     fs.cpSync("cloud/shared", dir + "/shared", { recursive: true });
+    fs.cpSync("shared", dir + "/shared", { recursive: true });
   }
 }
 console.log(

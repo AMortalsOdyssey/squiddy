@@ -1,3 +1,4 @@
+const { lineKey, orderedOptions } = require("../shared/selection");
 import { mode } from "../config/runtime";
 import type { Profile, Kitchen, Meal } from "./types";
 export const isLocal = mode === "demo";
@@ -86,6 +87,23 @@ export async function mutate<T = any>(
     throw error;
   }
 }
+export async function completeMedia(data: Record<string, unknown>) {
+  try {
+    return await mutate("media.complete", data);
+  } catch (error) {
+    const code = (error as ApiError).code;
+    if (code && !["NETWORK", "UNAVAILABLE", "TIMEOUT"].includes(code))
+      throw error;
+    // A free cloud invocation may time out after the server has committed.
+    // Read this exact upload ticket; never submit another image automatically.
+    try {
+      const state = await call("media.read", { media_id: data.media_id });
+      if (["uploading", "pending", "approved"].includes(state.status))
+        return state;
+    } catch {}
+    throw error;
+  }
+}
 export function failure(error: unknown) {
   const e = error as Error;
   wx.showToast({
@@ -128,7 +146,7 @@ function normalizeSelection(v: any): {
   if (
     !v ||
     !Array.isArray(v.items) ||
-    v.items.length > 30 ||
+    v.items.length > 60 ||
     !Number.isInteger(v.revision) ||
     v.revision < 0
   )
@@ -139,13 +157,11 @@ function normalizeSelection(v: any): {
     if (
       typeof i?.dish_id !== "string" ||
       !/^[a-zA-Z0-9_-]{1,128}$/.test(i.dish_id) ||
-      seen.has(i.dish_id) ||
       !Number.isInteger(i.quantity) ||
       i.quantity < 1 ||
       i.quantity > 20
     )
       return null;
-    seen.add(i.dish_id);
     if (
       i.variant !== undefined &&
       (typeof i.variant !== "string" || i.variant.length > 20)
@@ -164,13 +180,23 @@ function normalizeSelection(v: any): {
         ))
     )
       return null;
+    const canonical = lineKey(i);
+    if (
+      seen.has(canonical) ||
+      (i.line_id && i.line_id !== canonical) ||
+      new Set((i.options || []).map((o: any) => o.name)).size !==
+        (i.options || []).length
+    )
+      return null;
+    seen.add(canonical);
     items.push({
+      line_id: canonical,
       dish_id: i.dish_id,
       quantity: i.quantity,
       ...(i.variant ? { variant: i.variant } : {}),
       ...(i.options?.length
         ? {
-            options: i.options.map((a: any) => ({
+            options: orderedOptions(i.options).map((a: any) => ({
               name: a.name,
               value: a.value,
             })),
@@ -178,6 +204,13 @@ function normalizeSelection(v: any): {
         : {}),
     });
   }
+  for (const did of new Set(items.map((i) => i.dish_id)))
+    if (
+      items
+        .filter((i) => i.dish_id === did)
+        .reduce((n, i) => n + i.quantity, 0) > 20
+    )
+      return null;
   return {
     items,
     people:
@@ -242,27 +275,68 @@ export const statusLabel = (status: string, served = 0): string =>
     cancelled: "已取消",
     archived: "已归档",
   })[status] || status;
-export async function resolveImages(dishes: import("./types").Dish[]) {
-  const url = async (id: string) => {
-    if (!id) return "";
-    try {
+const mediaFiles = new Set<string>();
+export function clearMediaFiles() {
+  try {
+    const fs = wx.getFileSystemManager();
+    for (const name of fs.readdirSync(wx.env.USER_DATA_PATH))
+      if (/^squiddy-media-[a-zA-Z0-9_-]+\.jpg$/.test(name))
+        fs.unlinkSync(wx.env.USER_DATA_PATH + "/" + name);
+  } catch {}
+  mediaFiles.clear();
+}
+export async function mediaImage(id: string) {
+  if (!id) return "";
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id)) return "";
+  try {
+    if (isLocal) {
       const m = await call("media.read", { media_id: id });
-      if (m.status !== "approved") return "";
-      return isLocal
-        ? m.file_id
-        : (await call("media.url", { media_id: id })).url;
-    } catch {
-      return "";
+      return m.status === "approved" ? m.file_id : "";
     }
+    // The authenticated function reads private storage. The client never
+    // needs public bucket access or an extra download-domain exception.
+    const result = await call("media.content", { media_id: id });
+    const path = wx.env.USER_DATA_PATH + "/squiddy-media-" + id + ".jpg";
+    await new Promise<void>((resolve, reject) =>
+      wx.getFileSystemManager().writeFile({
+        filePath: path,
+        data: result.base64,
+        encoding: "base64",
+        success: () => resolve(),
+        fail: reject,
+      }),
+    );
+    mediaFiles.add(path);
+    // Bound this session's private render cache. Every read still reauthorizes.
+    while (mediaFiles.size > 128) {
+      const old = mediaFiles.values().next().value!;
+      mediaFiles.delete(old);
+      try {
+        wx.getFileSystemManager().unlinkSync(old);
+      } catch {}
+    }
+    return path;
+  } catch {
+    return "";
+  }
+}
+export async function resolveImages(
+  dishes: import("./types").Dish[],
+  includeSteps = true,
+) {
+  const pending = new Map<string, Promise<string>>();
+  const read = (id: string) => {
+    if (!pending.has(id)) pending.set(id, mediaImage(id));
+    return pending.get(id)!;
   };
   return Promise.all(
     dishes.map(async (d) => ({
       ...d,
-      image_url: await url(d.image_id),
+      image_url: await read(d.image_id),
       recipe_steps: await Promise.all(
         (d.recipe_steps || []).map(async (s) => ({
           ...s,
-          image_url: await url(s.image_id),
+          image_url: includeSteps ? await read(s.image_id) : "",
         })),
       ),
     })),

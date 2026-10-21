@@ -1,7 +1,7 @@
 "use strict";
 const crypto = require("node:crypto");
 const { cloudStore } = require("./store");
-const { AppError, ensure, input } = require("../domain/errors");
+const { AppError, ensure, input, keys } = require("../domain/errors");
 const { createService } = require("../domain/service");
 const {
   publicRead,
@@ -14,7 +14,9 @@ function trustedSource(context, expected) {
   ensure(
     expected &&
       context.SOURCE === expected &&
-      !context.OPENID &&
+      // A real media event has SDK SOURCE=wx_callback and carries its sender's
+      // OPENID. Client chains still have wx_client in SOURCE and cannot opt in.
+      (!context.OPENID || expected === "wx_callback") &&
       !context.FROM_APPID &&
       !/(wx_client|http)/i.test(context.SOURCE),
     "FORBIDDEN",
@@ -100,7 +102,7 @@ function makeRuntime({
             metadata.height > 0,
           "仅支持JPEG、PNG和WebP图片",
         );
-        const { data, info } = await parser
+        let { data, info } = await parser
           .rotate()
           .resize({
             width: 1600,
@@ -110,6 +112,17 @@ function makeRuntime({
           })
           .jpeg({ quality: 85 })
           .toBuffer({ resolveWithObject: true });
+        if (data.length > 512 * 1024)
+          ({ data, info } = await sharp(data)
+            .resize({
+              width: 960,
+              height: 960,
+              fit: "inside",
+              withoutEnlargement: true,
+            })
+            .jpeg({ quality: 65 })
+            .toBuffer({ resolveWithObject: true }));
+        input(data.length <= 512 * 1024, "图片内容过大，请裁剪后再上传");
         const uploaded = await cloud.uploadFile({
           cloudPath: "private-images/" + image.id + ".jpg",
           fileContent: data,
@@ -163,6 +176,52 @@ function makeRuntime({
       event && typeof event.action === "string" && event.action.length < 64,
     );
     const payload = event.payload || {};
+    if (event.action === "platform.inspect") {
+      keys(payload, ["kitchen_id"]);
+      const kitchen = await service.execute("kitchen.read", payload, context);
+      ensure(
+        kitchen.role === "owner",
+        "FORBIDDEN",
+        "仅厨房主人可检查平台接入状态",
+      );
+      const [templates, categories] = await Promise.allSettled([
+        cloud.openapi.subscribeMessage.getTemplateList({}),
+        cloud.openapi.subscribeMessage.getCategory({}),
+      ]);
+      const safe = (r) =>
+        r.status === "fulfilled"
+          ? {
+              err_code: r.value.errCode || 0,
+              response_keys: Object.keys(r.value),
+              data: (
+                r.value.data ||
+                r.value.categoryList ||
+                r.value.templateList ||
+                []
+              ).map((t) =>
+                Object.fromEntries(
+                  Object.entries(t).filter(([k]) =>
+                    [
+                      "priTmplId",
+                      "title",
+                      "content",
+                      "type",
+                      "example",
+                      "id",
+                      "name",
+                    ].includes(k),
+                  ),
+                ),
+              ),
+            }
+          : {
+              err_code: String(
+                r.reason?.errCode || r.reason?.code || "UNAVAILABLE",
+              ),
+              data: [],
+            };
+      return { templates: safe(templates), categories: safe(categories) };
+    }
     if (event.action === "poster.code") {
       const share = await service.execute("share.ownerRead", payload, context);
       ensure(
@@ -172,11 +231,16 @@ function makeRuntime({
       );
       const scene = "s=" + share.id;
       input(scene.length <= 32, "请重新创建较短的公开分享");
+      const codeEnv = env.SQUIDDY_CODE_ENV || "release";
+      input(
+        ["release", "trial", "develop"].includes(codeEnv),
+        "小程序码版本配置无效",
+      );
       const result = await cloud.openapi.wxacode.getUnlimited({
         scene,
         page: "pages/invite/index",
-        checkPath: true,
-        envVersion: env.SQUIDDY_CODE_ENV || "release",
+        checkPath: codeEnv === "release",
+        envVersion: codeEnv,
         width: 360,
       });
       ensure(
@@ -190,9 +254,20 @@ function makeRuntime({
         dishes: share.dishes,
       };
     }
-    if (event.action === "media.url") {
+    if (event.action === "media.url" || event.action === "media.content") {
       const image = await service.execute("media.read", payload, context);
       ensure(image.status === "approved", "NOT_FOUND", "图片尚未审核通过");
+      if (event.action === "media.content") {
+        const r = await cloud.downloadFile({ fileID: image.file_id });
+        ensure(
+          Buffer.isBuffer(r.fileContent) &&
+            r.fileContent.length > 0 &&
+            r.fileContent.length <= 512 * 1024,
+          "UNAVAILABLE",
+          "图片暂不可用，请重新上传",
+        );
+        return { base64: r.fileContent.toString("base64"), type: "jpeg" };
+      }
       const r = await cloud.getTempFileURL({ fileList: [image.file_id] });
       ensure(r.fileList?.[0]?.status === 0, "UNAVAILABLE", "图片暂不可用");
       return { url: r.fileList[0].tempFileURL };
@@ -208,6 +283,41 @@ function makeRuntime({
     return result;
   }
   async function callback(event, context) {
+    // Diagnostic metadata never grants callback access and contains no sender identity.
+    const source =
+      typeof context.SOURCE === "string" ? context.SOURCE.slice(0, 80) : "";
+    await store.transaction((tx) =>
+      tx.put(
+        "audit_events",
+        "callback-source-" +
+          crypt
+            .hash(
+              source +
+                ":" +
+                !!context.OPENID +
+                ":" +
+                !!context.FROM_APPID +
+                ":" +
+                (context.APPID === appid),
+            )
+            .slice(0, 24),
+        {
+          type: "platform_callback_context",
+          source,
+          has_appid: !!context.APPID,
+          matches_context_appid: context.APPID === appid,
+          has_openid: !!context.OPENID,
+          has_from_appid: !!context.FROM_APPID,
+          matches_event_appid: event?.appid === appid,
+          event_is_media_check: event?.Event === "wxa_media_check",
+          trace_fingerprint:
+            typeof event?.trace_id === "string"
+              ? crypt.hash(event.trace_id).slice(0, 24)
+              : "",
+          created_at: Date.now(),
+        },
+      ),
+    );
     trustedSource(context, env.SQUIDDY_CALLBACK_SOURCE);
     ensure(context.APPID === appid, "FORBIDDEN", "应用不匹配");
     // Callback can arrive before media.complete commits its trace; keep a durable inbox.
@@ -283,6 +393,7 @@ function makeRuntime({
             touser: job.openid,
             templateId: job.template.template_id,
             page: "pages/meal/index?id=" + job.meal_id,
+            miniprogramState: env.SQUIDDY_MESSAGE_ENV || "formal",
             data: {
               [env.SQUIDDY_TEMPLATE_TITLE_KEY]: {
                 value: job.title.slice(0, 20),

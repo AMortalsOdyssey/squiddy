@@ -1,3 +1,4 @@
+const { dishQuantity } = require("../../shared/selection");
 import {
   call,
   profile,
@@ -12,6 +13,7 @@ import {
   isLocal,
   failure,
   resolveImages,
+  mediaImage,
   dateLabel,
   statusLabel,
 } from "../../services/api";
@@ -82,20 +84,14 @@ Page({
       if (m && !draft) draft = m.selection;
       const dishes = await resolveImages(
         m ? m.menu.filter((d) => d.active) : k.dishes.filter((d) => d.active),
+        false,
       );
       const rows = dishes.map((d) => ({
         ...d,
-        quantity: draft?.items.find((i) => i.dish_id === d.id)?.quantity || 0,
+        quantity: dishQuantity(draft?.items || [], d.id),
       }));
       let coverUrl = "";
-      if (k.image_id)
-        try {
-          if (isLocal)
-            coverUrl = (await call("media.read", { media_id: k.image_id }))
-              .file_id;
-          else
-            coverUrl = (await call("media.url", { media_id: k.image_id })).url;
-        } catch {}
+      if (k.image_id) coverUrl = await mediaImage(k.image_id);
       this.setData({
         coverUrl,
         categories: [
@@ -167,12 +163,7 @@ Page({
     if (![-1, 1].includes(delta)) return;
     const target = this.data.dishes.find((d) => d.id === id);
     const previous = loadSelection(m.id) || m.selection;
-    if (
-      delta > 0 &&
-      target &&
-      (target.variants?.length || target.attributes?.length) &&
-      !previous.items.some((i) => i.dish_id === id)
-    ) {
+    if (target && (target.variants?.length || target.attributes?.length)) {
       wx.navigateTo({ url: "/pages/dish/index?id=" + id });
       return;
     }
@@ -184,18 +175,17 @@ Page({
     const old = loadSelection(m.id) || m.selection;
     const draft = {
       ...old,
-      items: rows
-        .filter((d) => d.quantity > 0)
-        .map((d) => ({
-          ...old.items.find((i) => i.dish_id === d.id),
-          dish_id: d.id,
-          quantity: d.quantity,
-        })),
+      items: [
+        ...old.items.filter((i) => i.dish_id !== id),
+        ...rows
+          .filter((d) => d.id === id && d.quantity > 0)
+          .map((d) => ({ dish_id: d.id, quantity: d.quantity })),
+      ],
     };
     if (saveSelection(m.id, draft)) {
       this.setData({
         dishes: rows,
-        count: draft.items.length,
+        count: new Set(draft.items.map((i) => i.dish_id)).size,
         portions: rows.reduce((sum, d) => sum + d.quantity, 0),
       });
       this.filter();

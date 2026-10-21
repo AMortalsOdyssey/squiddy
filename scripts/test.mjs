@@ -10,6 +10,7 @@ try {
   for (const name of [
     "src",
     "domain",
+    "shared",
     "cloud",
     "cloudfunctions",
     "scripts",

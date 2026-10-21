@@ -1,3 +1,4 @@
+const { lineKey, lineLabel, dishQuantity } = require("../../shared/selection");
 import {
   kitchen,
   meal,
@@ -17,6 +18,8 @@ Page({
     dish: null as Dish | null,
     meal: null as Meal | null,
     quantity: 0,
+    totalQuantity: 0,
+    chosen: [] as any[],
     canOrder: false,
     steps: [] as string[],
     variantIndex: 0,
@@ -37,30 +40,28 @@ Page({
       if (!d) throw Error("这道菜已不可查看，请返回菜单刷新");
       const [dish] = await resolveImages([d]);
       const draft = m ? loadSelection(m.id) || m.selection : null;
+      const selected = draft?.items.find((x) =>
+        q.line ? lineKey(x) === q.line : x.dish_id === d.id,
+      );
       this.setData({
         dish,
         allergenText: d.allergens.join("、"),
         variantIndex: Math.max(
           0,
-          (d.variants || []).indexOf(
-            draft?.items.find((x) => x.dish_id === d.id)?.variant || "",
-          ),
+          (d.variants || []).indexOf(selected?.variant || ""),
         ),
         optionIndexes: (d.attributes || []).map((a) =>
           Math.max(
             0,
             a.options.indexOf(
-              draft?.items
-                .find((x) => x.dish_id === d.id)
-                ?.options?.find((o) => o.name === a.name)?.value || "",
+              selected?.options?.find((o) => o.name === a.name)?.value || "",
             ),
           ),
         ),
         optionLabels: (d.attributes || []).map(
           (a) =>
-            draft?.items
-              .find((x) => x.dish_id === d.id)
-              ?.options?.find((o) => o.name === a.name)?.value || a.options[0],
+            selected?.options?.find((o) => o.name === a.name)?.value ||
+            a.options[0],
         ),
         nutritionRows: d.nutrition?.visible
           ? [
@@ -90,6 +91,7 @@ Page({
           .map((x) => x.trim())
           .filter(Boolean),
       });
+      this.updateOptions();
       wx.setNavigationBarTitle({ title: d.name });
     } catch (e) {
       this.setData({ error: (e as Error).message });
@@ -118,12 +120,20 @@ Page({
   updateOptions() {
     const m = this.data.meal,
       d = this.data.dish;
-    if (!m || !d || !this.data.canOrder || Date.now() >= m.cutoff_at) return;
+    if (!m || !d) return;
     const old = loadSelection(m.id) || m.selection;
-    const items = old.items.map((i) =>
-      i.dish_id === d.id ? { ...i, ...this.selectedOptions() } : i,
-    );
-    saveSelection(m.id, { ...old, items });
+    const selected = lineKey({ dish_id: d.id, ...this.selectedOptions() });
+    this.setData({
+      quantity: old.items.find((i) => lineKey(i) === selected)?.quantity || 0,
+      totalQuantity: dishQuantity(old.items, d.id),
+      chosen: old.items
+        .filter((i) => i.dish_id === d.id)
+        .map((i) => ({
+          ...i,
+          line_id: lineKey(i),
+          label: lineLabel(d.name, i),
+        })),
+    });
   },
   selectedOptions() {
     const d = this.data.dish;
@@ -151,18 +161,25 @@ Page({
     const delta = Number(e.currentTarget.dataset.delta);
     if (![-1, 1].includes(delta)) return;
     const old = loadSelection(m.id) || m.selection;
+    const selected = { dish_id: d.id, ...this.selectedOptions() };
+    const key = lineKey(selected);
     const quantity = Math.max(
       0,
-      Math.min(
-        20,
-        (old.items.find((x) => x.dish_id === d.id)?.quantity || 0) + delta,
-      ),
+      (old.items.find((i) => lineKey(i) === key)?.quantity || 0) + delta,
     );
-    const items = old.items.filter((x) => x.dish_id !== d.id);
-    if (quantity)
-      items.push({ dish_id: d.id, quantity, ...this.selectedOptions() });
-    if (saveSelection(m.id, { ...old, items })) this.setData({ quantity });
+    if (
+      delta > 0 &&
+      (dishQuantity(old.items, d.id) >= 20 ||
+        (old.items.length >= 60 && !old.items.some((i) => lineKey(i) === key)))
+    ) {
+      wx.showToast({ title: "每道菜合计最多20份，最多60个组合", icon: "none" });
+      return;
+    }
+    const items = old.items.filter((i) => lineKey(i) !== key);
+    if (quantity) items.push({ ...selected, quantity, line_id: key });
+    if (saveSelection(m.id, { ...old, items })) this.updateOptions();
   },
+
   review() {
     wx.switchTab({ url: "/pages/meal/index" });
   },

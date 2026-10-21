@@ -26,7 +26,7 @@ test("实际草稿模块拒绝损坏数量、重复菜品并白名单过滤价�
     true,
   );
   assert.deepEqual(api.loadSelection(id), {
-    items: [{ dish_id: "a", quantity: 2 }],
+    items: [{ line_id: "a", dish_id: "a", quantity: 2 }],
     note: "不要香菜",
     people: 2,
     revision: 0,
@@ -65,4 +65,92 @@ test("货币转换拒绝指数、负数及三位小数，零与未填不同", ()
   assert.equal(api.parseMoney("12.30"), 1230);
   for (const v of ["1e2", "-1", "1.234", "100000"])
     assert.throws(() => api.parseMoney(v));
+});
+test("云图片调用超时后只回读同一上传任务，不重新上传；确定性失败不掩盖", async () => {
+  const fs = require("node:fs"),
+    vm = require("node:vm"),
+    { createRequire } = require("node:module");
+  const file = require.resolve("../miniprogram/services/api"),
+    ownRequire = createRequire(file);
+  const source = fs.readFileSync(file, "utf8"),
+    calls = [],
+    saved = new Map(),
+    files = new Map([["user-document.txt", "keep"]]);
+  let rejected = false;
+  const module = { exports: {} };
+  const wxCloud = {
+    getStorageSync: (k) => saved.get(k),
+    setStorageSync: (k, v) => saved.set(k, v),
+    removeStorageSync: (k) => saved.delete(k),
+    env: { USER_DATA_PATH: "/private-render-test" },
+    getFileSystemManager: () => ({
+      writeFile: ({ filePath, data, success }) => {
+        files.set(filePath.split("/").at(-1), data);
+        success();
+      },
+      readdirSync: () => [...files.keys()],
+      unlinkSync: (path) => files.delete(path.split("/").at(-1)),
+    }),
+    cloud: {
+      callFunction: async ({ data: { action, payload } }) => {
+        calls.push([action, payload.media_id]);
+        if (action === "media.content")
+          return {
+            result: { ok: true, data: { type: "jpeg", base64: "/9j/2Q==" } },
+          };
+        if (action === "media.complete") {
+          if (rejected)
+            return {
+              result: {
+                ok: false,
+                error: { code: "INVALID_IMAGE", message: "图片格式错误" },
+              },
+            };
+          throw {
+            errCode: -504003,
+            errMsg: "Invoking task timed out after 3 seconds",
+          };
+        }
+        return {
+          result: {
+            ok: true,
+            data: { id: payload.media_id, status: "pending" },
+          },
+        };
+      },
+    },
+  };
+  const run = vm.runInNewContext(
+    "(function(exports,require,module){" + source + "\n})",
+    { wx: wxCloud, console: { info() {}, warn() {} } },
+  );
+  run(
+    module.exports,
+    (name) =>
+      name === "../config/runtime" ? { mode: "cloud" } : ownRequire(name),
+    module,
+  );
+  const cloudApi = module.exports;
+  const result = await cloudApi.completeMedia({
+    media_id: "same-ticket",
+    base64: "aGVsbG8=",
+  });
+  assert.equal(result.status, "pending");
+  assert.deepEqual(calls, [
+    ["media.complete", "same-ticket"],
+    ["media.read", "same-ticket"],
+  ]);
+  rejected = true;
+  calls.length = 0;
+  await assert.rejects(
+    cloudApi.completeMedia({ media_id: "invalid-ticket" }),
+    (e) => e.code === "INVALID_IMAGE",
+  );
+  assert.deepEqual(calls, [["media.complete", "invalid-ticket"]]);
+  const image = await cloudApi.mediaImage("approved-render");
+  assert.equal(image, "/private-render-test/squiddy-media-approved-render.jpg");
+  assert.equal(files.get("squiddy-media-approved-render.jpg"), "/9j/2Q==");
+  cloudApi.clearMediaFiles();
+  assert.equal(files.has("squiddy-media-approved-render.jpg"), false);
+  assert.equal(files.get("user-document.txt"), "keep");
 });

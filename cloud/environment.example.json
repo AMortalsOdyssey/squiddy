@@ -7,5 +7,6 @@
   "SQUIDDY_TEMPLATE_TITLE_KEY": "",
   "SQUIDDY_TEMPLATE_STATUS_KEY": "",
   "SQUIDDY_POSTER_ENABLED": "false",
-  "SQUIDDY_CODE_ENV": "release"
+  "SQUIDDY_CODE_ENV": "release",
+  "SQUIDDY_MESSAGE_ENV": "formal"
 }

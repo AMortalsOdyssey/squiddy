@@ -9,6 +9,7 @@ import {
   kitchen,
   currentKitchen,
   mutate,
+  completeMedia,
   call,
   failure,
   isLocal,
@@ -38,6 +39,7 @@ Page({
       image_status?: string;
     }[],
     variants: "",
+    variantPrices: [] as { variant: string; value: string }[],
     attributes: "",
     nutritionVisible: false,
     nutritionSource: "",
@@ -91,6 +93,18 @@ Page({
             image_status: s.image_id ? "approved" : "",
           })),
           variants: (d.variants || []).join("、"),
+          variantPrices: (d.variants || []).map((variant) => ({
+            variant,
+            value:
+              d!.default_variant_prices?.find((p) => p.variant === variant)
+                ?.unit_price_minor == null
+                ? ""
+                : money(
+                    d!.default_variant_prices!.find(
+                      (p) => p.variant === variant,
+                    )!.unit_price_minor,
+                  ),
+          })),
           attributes: (d.attributes || [])
             .map((a) => a.name + ":" + a.options.join("、"))
             .join("\n"),
@@ -138,6 +152,7 @@ Page({
         });
         if (answer.confirm) {
           this.setData({ ...draft.fields, dirty: true, draftSaved: true });
+          this.syncVariantPrices();
           warnUnsaved();
         } else clearForm("editor", q.id || "");
       }
@@ -148,7 +163,7 @@ Page({
     }
   },
   onUnload() {
-    this.setData({ price: "" });
+    this.setData({ price: "", variantPrices: [] });
     clearUnsavedWarning();
   },
   remember() {
@@ -195,6 +210,31 @@ Page({
     )
       return;
     this.setData({ [field]: e.detail.value });
+    if (field === "variants") this.syncVariantPrices();
+    this.remember();
+  },
+  syncVariantPrices() {
+    this.setData({
+      variantPrices: Array.from(
+        new Set(
+          this.data.variants
+            .split(/[、,，\n]/)
+            .map((v) => v.trim())
+            .filter(Boolean),
+        ),
+      ).map((variant) => ({
+        variant,
+        value:
+          this.data.variantPrices.find((p) => p.variant === variant)?.value ||
+          "",
+      })),
+    });
+  },
+  variantPriceInput(e: WechatMiniprogram.Input) {
+    this.setData({
+      ["variantPrices[" + Number(e.currentTarget.dataset.index) + "].value"]:
+        e.detail.value,
+    });
     this.remember();
   },
   category(e: WechatMiniprogram.PickerChange) {
@@ -322,6 +362,13 @@ Page({
       const ticket = await mutate("media.prepare", {
         kitchen_id: currentKitchen(),
       });
+      if (stepIndex === undefined) this.setData({ imageId: ticket.id });
+      else
+        this.setData({
+          ["stepRows[" + Number(stepIndex) + "].image_id"]: ticket.id,
+          ["stepRows[" + Number(stepIndex) + "].image_status"]: "uploading",
+          ["stepRows[" + Number(stepIndex) + "].image_url"]: file.tempFilePath,
+        });
       const payload: Record<string, unknown> = { media_id: ticket.id };
       if (isLocal) payload.local_path = file.tempFilePath;
       else
@@ -333,7 +380,7 @@ Page({
             fail: reject,
           }),
         );
-      const uploaded = await mutate("media.complete", payload);
+      const uploaded = await completeMedia(payload);
       if (stepIndex === undefined)
         this.setData({ imageId: ticket.id, imageStatus: uploaded.status });
       else {
@@ -435,8 +482,15 @@ Page({
         image_id: this.data.imageId,
       };
       if (!data.dish_id) delete data.dish_id;
-      if (this.data.canPrice)
+      if (this.data.canPrice) {
         data.default_price_minor = parseMoney(this.data.price);
+        data.variant_prices = this.data.variantPrices
+          .filter((p) => p.value.trim())
+          .map((p) => ({
+            variant: p.variant,
+            unit_price_minor: parseMoney(p.value),
+          }));
+      }
       await mutate("dish.save", data);
       clearForm("editor", this.data.dishId);
       this.setData({ dirty: false, draftSaved: false });

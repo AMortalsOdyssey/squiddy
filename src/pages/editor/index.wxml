@@ -20,7 +20,7 @@
       ><text class="muted"
         >{{imageStatus==='approved'?'图片已就绪':imageStatus==='pending'?'等待安全审核':'图片尚未就绪'}}</text
       ><button
-        wx:if="{{imageStatus==='pending'}}"
+        wx:if="{{imageStatus!=='approved'}}"
         class="link-button"
         bindtap="checkImage"
       >
@@ -119,7 +119,7 @@
     <view class="card"><view class="section-title">规格与口味</view><view class="muted">每道菜可选一种规格，每组口味单选；同一道菜的所有份数采用这一组合。价格沿用整道菜的内部参考价。</view><view class="label">规格</view><input class="input" value="{{variants}}" data-field="variants" bindinput="input" placeholder="例如：小份、大份" maxlength="160"/><view class="label">口味属性（每行一组）</view><textarea class="textarea" maxlength="600" value="{{attributes}}" data-field="attributes" bindinput="input" placeholder="例如：辣度:不辣、微辣、中辣（每组另起一行）"/></view>
     <view class="card"><view class="section-title">营养记录（选填）</view><view class="muted">请根据包装标签或可靠食材数据填写。没有来源不展示，不自动估算健康结论。</view><view class="form-row"><text>向朋友展示</text><switch checked="{{nutritionVisible}}" data-field="nutritionVisible" bindchange="toggle" color="#244B3B"/></view><input class="input" maxlength="100" value="{{nutritionSource}}" data-field="nutritionSource" bindinput="input" placeholder="数据来源，例如包装营养标签"/><input class="input" maxlength="60" value="{{nutritionBasis}}" data-field="nutritionBasis" bindinput="input" placeholder="计量依据，例如每100克"/>
 <view class="form-row"><text>能量（kcal）</text><input class="number-input" type="digit" value="{{calories}}" data-field="calories" bindinput="input" placeholder="未知"/></view><view class="form-row"><text>蛋白质（g）</text><input class="number-input" type="digit" value="{{protein}}" data-field="protein" bindinput="input" placeholder="未知"/></view><view class="form-row"><text>脂肪（g）</text><input class="number-input" type="digit" value="{{fat}}" data-field="fat" bindinput="input" placeholder="未知"/></view><view class="form-row"><text>碳水（g）</text><input class="number-input" type="digit" value="{{carbs}}" data-field="carbs" bindinput="input" placeholder="未知"/></view><view class="form-row"><text>膳食纤维（g）</text><input class="number-input" type="digit" value="{{fiber}}" data-field="fiber" bindinput="input" placeholder="未知"/></view></view>
-    <view wx:if="{{canPrice}}" class="card"
+    <view wx:if="{{canPrice&&variantPrices.length}}" class="card"><view class="section-title">规格内部参考价</view><view class="muted">留空沿用默认价，仅有权限的厨师可见。</view><view class="form-row" wx:for="{{variantPrices}}" wx:key="variant"><text>{{item.variant}}</text><input class="number-input" type="digit" maxlength="8" value="{{item.value}}" placeholder="默认价" data-index="{{index}}" bindinput="variantPriceInput"/></view></view><view wx:if="{{canPrice}}" class="card"
       ><view class="label">厨师内部参考价（元）</view
       ><input
         class="input"
