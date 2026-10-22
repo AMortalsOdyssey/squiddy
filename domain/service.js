@@ -323,7 +323,150 @@ function createService({
         return result;
       });
     }
-    // Check human text before a transaction; the production adapter fails closed if moderation is unavailable.
+    // Reuse the same authorization and receipt checks before external moderation
+    // and again inside the write transaction; moderation never grants access.
+    async function authorizeReplay(tx, user) {
+      ensure(
+        !user || user.status === "active",
+        "ACCOUNT_DELETED",
+        "此账号已注销",
+      );
+      // Reauthorize even on idempotent replay. A revoked actor cannot replay a privileged receipt.
+      let access;
+      if (payload.meal_id)
+        access = await mealAccess(
+          tx,
+          payload.meal_id,
+          actor,
+          [
+            "invitation.create",
+            "invitation.revokeAll",
+            "share.revokeAll",
+            "meal.lock",
+            "meal.unlock",
+            "meal.cancel",
+            "plan.confirm",
+            "item.transition",
+            "price.update",
+            "meal.archive",
+            "share.create",
+            "item.undo",
+            "shopping.generate",
+          ].includes(action),
+        );
+      if (payload.kitchen_id && action !== "invitation.accept")
+        access = await kitchenAccess(
+          tx,
+          payload.kitchen_id,
+          actor,
+          [
+            "kitchen.close",
+            "kitchen.update",
+            "member.role",
+            "member.remove",
+          ].includes(action)
+            ? ["owner"]
+            : [
+                  "dish.save",
+                  "backup.restoreDish",
+                  "meal.publish",
+                  "category.save",
+                  "dish.reorder",
+                  "library.import",
+                ].includes(action)
+              ? ["owner", "cook"]
+              : undefined,
+        );
+      const receiptKey = req ? key(actor, action, req) : "";
+      const fingerprint = req ? key(JSON.stringify(payload)) : "";
+      if (req) {
+        const receipt = await tx.get("receipts", receiptKey);
+        if (receipt) {
+          ensure(
+            receipt.fingerprint === fingerprint,
+            "IDEMPOTENCY_CONFLICT",
+            "这次操作内容已变化，请重新操作",
+          );
+          return {
+            replayed: true,
+            result:
+              action === "invitation.create"
+                ? { ...receipt.result, token: crypto.token(actor + ":" + req) }
+                : receipt.result,
+          };
+        }
+      }
+      return { replayed: false, access };
+    }
+    async function moderationPreflight(tx) {
+      const user = await tx.get("users", actor);
+      const checked = await authorizeReplay(tx, user);
+      if (checked.replayed) return checked;
+      if (
+        [
+          "shopping.add",
+          "shopping.update",
+          "meal.review.save",
+          "item.undo",
+          "item.transition",
+          "plan.confirm",
+          "selection.replace",
+        ].includes(action)
+      )
+        id(payload.meal_id);
+      if (
+        [
+          "meal.publish",
+          "dish.save",
+          "category.save",
+          "kitchen.update",
+          "backup.restoreDish",
+        ].includes(action)
+      ) {
+        const { kitchen: k } =
+          checked.access ||
+          (await kitchenAccess(
+            tx,
+            payload.kitchen_id,
+            actor,
+            action === "kitchen.update" ? ["owner"] : ["owner", "cook"],
+          ));
+        // Only load active meal rows when the stored index could be full.
+        // The write transaction still checks capacity again after moderation.
+        if (
+          action === "meal.publish" &&
+          (!Array.isArray(k.active_meal_ids) ||
+            k.active_meal_ids.length >= limits.active_meals)
+        )
+          input(
+            (await activeMealIds(tx, k)).length < limits.active_meals,
+            "同时进行中的饭局已达40场，请先结束一场",
+          );
+        if (action === "dish.save" && !payload.dish_id)
+          input(k.dish_ids.length < limits.dishes, "最多保存80道菜");
+      }
+      if (
+        ["kitchen.create", "backup.restoreKitchen"].includes(action) &&
+        (user?.kitchen_ids?.length || 0) >= limits.kitchens
+      ) {
+        // Restore may return an existing kitchen without consuming a slot.
+        const restored =
+          action === "backup.restoreKitchen" &&
+          user.restored_kitchens?.[payload.backup_group];
+        const k = restored ? await tx.get("kitchens", restored) : null;
+        if (!(k?.status === "active" && k.owner_id === actor)) {
+          const joined = await getMany(tx, "kitchens", user.kitchen_ids);
+          input(
+            [...joined.values()].filter((k) => k.status === "active").length <
+              limits.kitchens,
+            "最多加入5个厨房",
+          );
+        }
+      }
+      return null;
+    }
+    // Human text is checked outside the write transaction, after cheap rejection
+    // and replay checks. The production adapter fails closed on provider failure.
     const textByAction = {
       "shopping.add": [payload.name, payload.amount, payload.note],
       "shopping.update": [payload.name, payload.amount, payload.note],
@@ -382,9 +525,12 @@ function createService({
         .filter((x) => typeof x === "string" && x.trim())
         .join("\n");
       input(content.length <= 6000, "文字内容过长");
-      if (content)
+      if (content) {
+        const replay = await store.transaction(moderationPreflight);
+        if (replay) return replay.result;
         for (let offset = 0; offset < content.length; offset += 2000)
           await moderate(content.slice(offset, offset + 2200), context.OPENID);
+      }
     }
     return store.transaction(async (tx) => {
       let user = await tx.get("users", actor);
@@ -399,65 +545,10 @@ function createService({
         };
         await tx.put("users", actor, user);
       }
-      ensure(user.status === "active", "ACCOUNT_DELETED", "此账号已注销");
-      // Reauthorize even on idempotent replay. A revoked actor cannot replay a privileged receipt.
-      if (payload.meal_id)
-        await mealAccess(
-          tx,
-          payload.meal_id,
-          actor,
-          [
-            "invitation.create",
-            "invitation.revokeAll",
-            "share.revokeAll",
-            "meal.lock",
-            "meal.unlock",
-            "meal.cancel",
-            "plan.confirm",
-            "item.transition",
-            "price.update",
-            "meal.archive",
-            "share.create",
-            "item.undo",
-            "shopping.generate",
-          ].includes(action),
-        );
-      else if (payload.kitchen_id && action !== "invitation.accept")
-        await kitchenAccess(
-          tx,
-          payload.kitchen_id,
-          actor,
-          [
-            "kitchen.close",
-            "kitchen.update",
-            "member.role",
-            "member.remove",
-          ].includes(action)
-            ? ["owner"]
-            : [
-                  "dish.save",
-                  "category.save",
-                  "dish.reorder",
-                  "library.import",
-                ].includes(action)
-              ? ["owner", "cook"]
-              : undefined,
-        );
+      const checked = await authorizeReplay(tx, user);
+      if (checked.replayed) return checked.result;
       const receiptKey = req ? key(actor, action, req) : "";
       const fingerprint = req ? key(JSON.stringify(payload)) : "";
-      if (req) {
-        const receipt = await tx.get("receipts", receiptKey);
-        if (receipt) {
-          ensure(
-            receipt.fingerprint === fingerprint,
-            "IDEMPOTENCY_CONFLICT",
-            "这次操作内容已变化，请重新操作",
-          );
-          return action === "invitation.create"
-            ? { ...receipt.result, token: crypto.token(actor + ":" + req) }
-            : receipt.result;
-        }
-      }
       let result;
       switch (action) {
         case "shopping.read":

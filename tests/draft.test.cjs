@@ -8,6 +8,75 @@ global.wx = {
   showToast: () => {},
 };
 const api = require("../miniprogram/services/api");
+test("发布回包丢失再遇审核限额时保留原请求号，恢复后确认结果而不创建新意图", async () => {
+  const fs = require("node:fs"),
+    vm = require("node:vm"),
+    { createRequire } = require("node:module");
+  const file = require.resolve("../miniprogram/services/api"),
+    ownRequire = createRequire(file);
+  const storage = new Map(),
+    requests = [];
+  const module = { exports: {} };
+  vm.runInNewContext(fs.readFileSync(file, "utf8"), {
+    module,
+    exports: module.exports,
+    console,
+    require: (id) =>
+      id === "../config/runtime" ? { mode: "cloud" } : ownRequire(id),
+    wx: {
+      getStorageSync: (k) => storage.get(k),
+      setStorageSync: (k, v) => storage.set(k, structuredClone(v)),
+      removeStorageSync: (k) => storage.delete(k),
+      cloud: {
+        callFunction: async (options) => {
+          requests.push(options.data.payload.request_id);
+          if (requests.length === 1)
+            throw Object.assign(Error("acknowledgement lost"), {
+              code: "NETWORK",
+            });
+          if (requests.length === 2)
+            return {
+              result: {
+                ok: false,
+                error: {
+                  code: "CONTENT_RATE_LIMITED",
+                  message: "文字审核日额度已用尽",
+                },
+              },
+            };
+          return {
+            result: { ok: true, data: { id: "already-committed-meal" } },
+          };
+        },
+      },
+    },
+  });
+  const mutate = module.exports.mutate;
+  const payload = {
+    kitchen_id: "kitchen",
+    title: "原发布内容",
+    dish_ids: ["dish"],
+  };
+  await assert.rejects(
+    mutate("meal.publish", payload),
+    (e) => e.code === "NETWORK",
+  );
+  assert.equal(requests.length, 1);
+  assert.equal(storage.size, 1);
+  await assert.rejects(
+    mutate("meal.publish", payload),
+    (e) => e.code === "CONTENT_RATE_LIMITED",
+  );
+  assert.equal(requests.length, 2, "不得自动重试");
+  assert.equal(storage.size, 1);
+  assert.equal(
+    (await mutate("meal.publish", payload)).id,
+    "already-committed-meal",
+  );
+  assert.equal(requests.length, 3);
+  assert.equal(new Set(requests).size, 1);
+  assert.equal(storage.size, 0);
+});
 test("启动清理不使用同步文件API，新图片等待旧文件清理，备份文件保留", async () => {
   const fs = require("node:fs"),
     vm = require("node:vm"),

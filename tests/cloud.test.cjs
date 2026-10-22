@@ -133,6 +133,12 @@ test("短时限维护任务轮转队列，繁忙清理队列不会饿死保留�
 });
 test("完整运行时满40场拒绝有效第41场，释放名额后审核日额度失败不占位，恢复后原请求仅发布一次", async () => {
   const r = runtime();
+  let checks = 0;
+  const approved = async () => {
+    checks++;
+    return { errCode: 0, result: { suggest: "pass" } };
+  };
+  r.cloud.openapi.security.msgSecCheck = approved;
   let request = 0;
   const call = (action, payload) =>
     r.handle(
@@ -179,10 +185,12 @@ test("完整运行时满40场拒绝有效第41场，释放名额后审核日额�
     };
   };
   const full = business();
+  assert.equal(checks, 42);
   const denied = await call("meal.publish", payload);
   assert.equal(denied.error.code, "INVALID_INPUT");
   assert.match(denied.error.message, /40场/);
   assert.deepEqual(business(), full);
+  assert.equal(checks, 42, "满额请求不应消耗审核调用");
   assert.equal(
     (
       await call("meal.cancel", {
@@ -195,27 +203,228 @@ test("完整运行时满40场拒绝有效第41场，释放名额后审核日额�
   assert.equal(business().kitchen.active_meal_ids.length, 39);
   const beforeAuditFailure = business();
   r.cloud.openapi.security.msgSecCheck = async () => {
+    checks++;
     throw { errCode: 45009, errMsg: "reach max api daily quota limit" };
   };
   const retry = { ...payload, request_id: "capacity-release-retry" };
-  assert.equal(
-    (await call("meal.publish", retry)).error.code,
-    "CONTENT_RATE_LIMITED",
-  );
+  const rejected = await call("meal.publish", retry);
+  assert.equal(rejected.error.code, "CONTENT_RATE_LIMITED");
+  assert.match(rejected.error.message, /日额度.*恢复后/);
   assert.deepEqual(business(), beforeAuditFailure);
-  r.cloud.openapi.security.msgSecCheck = async () => ({
-    errCode: 0,
-    result: { suggest: "pass" },
-  });
+  r.cloud.openapi.security.msgSecCheck = approved;
   const recovered = await call("meal.publish", retry);
   assert.equal(recovered.ok, true);
   assert.deepEqual((await call("meal.publish", retry)).data, recovered.data);
   assert.equal(business().kitchen.active_meal_ids.length, 40);
   assert.equal(Object.keys(business().meals).length, 41);
+  assert.equal(checks, 44, "成功回执重放不应再次审核");
   assert.equal(
     (await call("meal.publish", payload)).error.code,
     "INVALID_INPUT",
   );
+  assert.equal(checks, 44);
+});
+test("审核前拒绝越权、已注销及回执冲突，成功回执在额度耗尽后仍可安全重放", async () => {
+  const f = await setup(),
+    r = runtime({ store: f.store });
+  let checks = 0;
+  r.cloud.openapi.security.msgSecCheck = async () => {
+    checks++;
+    return { errCode: 0, result: { suggest: "pass" } };
+  };
+  const event = {
+    action: "meal.publish",
+    payload: {
+      request_id: "replay-without-audit",
+      kitchen_id: f.kid,
+      title: "少一次无用审核",
+      dish_ids: [f.dishes[0]],
+      scheduled_at: Date.now() + 7200000,
+      cutoff_at: Date.now() + 3600000,
+    },
+  };
+  const first = await r.handle("api", event, ctx);
+  assert.equal(first.ok, true);
+  assert.equal(checks, 1);
+  r.cloud.openapi.security.msgSecCheck = async () => {
+    checks++;
+    throw { errCode: 45009, errMsg: "reach max api daily quota limit" };
+  };
+  assert.deepEqual((await r.handle("api", event, ctx)).data, first.data);
+  assert.equal(
+    (
+      await r.handle(
+        "api",
+        { ...event, payload: { ...event.payload, title: "改了内容" } },
+        ctx,
+      )
+    ).error.code,
+    "IDEMPOTENCY_CONFLICT",
+  );
+  assert.equal(
+    (await r.handle("api", event, { ...ctx, OPENID: "stranger" })).error.code,
+    "NOT_FOUND",
+  );
+  assert.equal(
+    (await r.handle("api", event, { ...ctx, OPENID: "alice" })).error.code,
+    "FORBIDDEN",
+  );
+  assert.equal(
+    (
+      await r.handle(
+        "api",
+        { ...event, payload: { ...event.payload, meal_id: f.mid } },
+        { ...ctx, OPENID: "alice" },
+      )
+    ).error.code,
+    "FORBIDDEN",
+  );
+  await f.store.transaction(async (tx) => {
+    const k = await tx.get("kitchens", f.kid);
+    const member = await tx.get(
+      "memberships",
+      f.crypt.hash("member:" + f.kid + ":" + f.actorId("chef")),
+    );
+    member.status = "removed";
+    await tx.put(
+      "memberships",
+      f.crypt.hash("member:" + k.id + ":" + f.actorId("chef")),
+      member,
+    );
+  });
+  assert.equal((await r.handle("api", event, ctx)).error.code, "NOT_FOUND");
+  await f.store.transaction(async (tx) => {
+    const user = await tx.get("users", f.actorId("chef"));
+    user.status = "deleted";
+    await tx.put("users", user.id, user);
+  });
+  assert.equal(
+    (await r.handle("api", event, ctx)).error.code,
+    "ACCOUNT_DELETED",
+  );
+  assert.equal(checks, 1);
+});
+test("审核中撤权仍被写入事务再次拒绝，审核通过不等于取得写权限", async () => {
+  const f = await setup(),
+    r = runtime({ store: f.store });
+  r.cloud.openapi.security.msgSecCheck = async () => {
+    await f.store.transaction(async (tx) => {
+      const user = await tx.get("users", f.actorId("chef"));
+      user.status = "deleted";
+      await tx.put("users", user.id, user);
+    });
+    return { errCode: 0, result: { suggest: "pass" } };
+  };
+  const before = f.store.snapshot();
+  const result = await r.handle(
+    "api",
+    {
+      action: "meal.publish",
+      payload: {
+        request_id: "revoked-during-audit",
+        kitchen_id: f.kid,
+        title: "审核中撤权",
+        dish_ids: [f.dishes[0]],
+        scheduled_at: Date.now() + 7200000,
+        cutoff_at: Date.now() + 3600000,
+      },
+    },
+    ctx,
+  );
+  assert.equal(result.error.code, "ACCOUNT_DELETED");
+  assert.deepEqual(f.store.snapshot().meals, before.meals);
+  assert.deepEqual(f.store.snapshot().receipts, before.receipts);
+});
+test("80道菜和5个厨房满额在审核前拒绝，已有菜谱编辑仍必须审核", async () => {
+  const f = await setup();
+  const dish = {
+    kitchen_id: f.kid,
+    name: "容量菜",
+    category: "vegetable",
+    ingredients: ["番茄"],
+    allergens: [],
+    minutes: 10,
+  };
+  for (let i = 5; i < 80; i++) await f.call("chef", "dish.save", dish);
+  for (let i = 1; i < 5; i++)
+    await f.call("chef", "kitchen.create", { name: "容量厨房" });
+  const r = runtime({ store: f.store });
+  let checks = 0;
+  r.cloud.openapi.security.msgSecCheck = async () => {
+    checks++;
+    throw { errCode: 45009, errMsg: "reach max api daily quota limit" };
+  };
+  for (const [action, payload, message] of [
+    ["dish.save", dish, /80道菜/],
+    ["kitchen.create", { name: "第六厨房" }, /5个厨房/],
+  ]) {
+    const response = await r.handle(
+      "api",
+      {
+        action,
+        payload: {
+          ...payload,
+          request_id: "full-" + action.replaceAll(".", "_"),
+        },
+      },
+      ctx,
+    );
+    assert.equal(response.error.code, "INVALID_INPUT");
+    assert.match(response.error.message, message);
+  }
+  assert.equal(checks, 0);
+  const response = await r.handle(
+    "api",
+    {
+      action: "dish.save",
+      payload: {
+        ...dish,
+        dish_id: f.dishes[0],
+        expected_revision: 1,
+        request_id: "edit-full-kitchen",
+      },
+    },
+    ctx,
+  );
+  assert.equal(response.error.code, "CONTENT_RATE_LIMITED");
+  assert.equal(checks, 1);
+});
+test("审核期间最后一个饭局名额被其他请求占用，写事务再次检查而不超卖", async () => {
+  const f = await setup();
+  const payload = {
+    kitchen_id: f.kid,
+    title: "有效饭局",
+    dish_ids: [f.dishes[0]],
+    scheduled_at: Date.now() + 7200000,
+    cutoff_at: Date.now() + 3600000,
+  };
+  for (let i = 1; i < 39; i++)
+    await f.call("chef", "meal.publish", {
+      ...payload,
+      scheduled_at: f.now() + 7200000,
+      cutoff_at: f.now() + 3600000,
+    });
+  const r = runtime({ store: f.store });
+  r.cloud.openapi.security.msgSecCheck = async () => {
+    await f.call("chef", "meal.publish", {
+      ...payload,
+      scheduled_at: f.now() + 7200000,
+      cutoff_at: f.now() + 3600000,
+    });
+    return { errCode: 0, result: { suggest: "pass" } };
+  };
+  const response = await r.handle(
+    "api",
+    {
+      action: "meal.publish",
+      payload: { ...payload, request_id: "last-slot-race" },
+    },
+    ctx,
+  );
+  assert.equal(response.error.code, "INVALID_INPUT");
+  assert.match(response.error.message, /40场/);
+  assert.equal(Object.keys(f.store.snapshot().meals).length, 40);
+  assert.equal(f.store.snapshot().kitchens[f.kid].active_meal_ids.length, 40);
 });
 test("平台异常只保留私有诊断码，不记录输入或错误正文", async () => {
   const r = runtime();

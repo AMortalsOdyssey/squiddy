@@ -89,18 +89,22 @@ function makeRuntime({
             providerOperation: "openapi.security.msgSecCheck",
           };
       } catch (error) {
-        if (Number(error?.errCode) === 45009)
+        if (Number(error?.errCode) === 45009) {
+          const quotaScope = moderationQuotaScope(error);
           throw Object.assign(
             new AppError(
               "CONTENT_RATE_LIMITED",
-              "内容审核已达平台调用限制，请稍后再试",
+              quotaScope === "daily"
+                ? "文字审核日额度已用尽，请在额度恢复后重试"
+                : "内容审核已达平台调用限制，请稍后再试",
             ),
             {
               errCode: 45009,
               providerOperation: "openapi.security.msgSecCheck",
-              providerQuotaScope: moderationQuotaScope(error),
+              providerQuotaScope: quotaScope,
             },
           );
+        }
         throw error;
       }
       ensure(

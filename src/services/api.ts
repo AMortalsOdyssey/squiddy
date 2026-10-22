@@ -82,7 +82,14 @@ export async function mutate<T = any>(
     return result;
   } catch (error) {
     const code = (error as ApiError).code;
-    if (code && !["NETWORK", "UNAVAILABLE", "TIMEOUT"].includes(code))
+    // A previous attempt can have committed before its acknowledgement was lost.
+    // Keep the same intent through an audit outage so recovery can read its receipt.
+    if (
+      code &&
+      !["NETWORK", "UNAVAILABLE", "TIMEOUT", "CONTENT_RATE_LIMITED"].includes(
+        code,
+      )
+    )
       wx.removeStorageSync(key);
     throw error;
   }

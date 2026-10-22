@@ -52,6 +52,40 @@ function page(name) {
 const api = require("../miniprogram/services/api"),
   local = require("../miniprogram/services/local");
 const event = (data) => ({ currentTarget: { dataset: data } });
+test("审核日额度不足时发布页面保留表单和草稿，解除忙碌状态且不显示成功", async () => {
+  const forms = require("../miniprogram/services/forms");
+  const p = page("publish"),
+    original = api.mutate;
+  p.setData({
+    title: "额度恢复后继续",
+    date: "2099-01-01",
+    time: "18:30",
+    selected: ["quota-dish"],
+    estimatedPeople: "4",
+  });
+  p.remember();
+  const draft = forms.loadForm("publish", ""),
+    toastCount = toasts.length;
+  api.mutate = async () => {
+    throw new api.ApiError(
+      "CONTENT_RATE_LIMITED",
+      "文字审核日额度已用尽，请在额度恢复后重试",
+    );
+  };
+  try {
+    await p.publish();
+    assert.equal(p.data.busy, false);
+    assert.equal(p.data.title, "额度恢复后继续");
+    assert.deepEqual(p.data.selected, ["quota-dish"]);
+    assert.deepEqual(forms.loadForm("publish", ""), draft);
+    assert.deepEqual(toasts.slice(toastCount), [
+      "文字审核日额度已用尽，请在额度恢复后重试",
+    ]);
+  } finally {
+    api.mutate = original;
+    forms.clearForm("publish", "");
+  }
+});
 test("实际页面处理器全流程：建厨菜谱→三角色邀请→弱网→定份数→完成→复制→导出→注销", async () => {
   const k = page("kitchen");
   k.onLoad({ create: "1" });
