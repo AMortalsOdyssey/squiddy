@@ -20,15 +20,28 @@ function createMemoryStore(initial = {}, onCommit = () => {}) {
           async remove(c, id) {
             if (working[c]) delete working[c][id];
           },
+          async removeMany(c, ids) {
+            for (const id of ids) if (working[c]) delete working[c][id];
+          },
           async getMany(c, ids) {
             return [...new Set(ids)]
               .filter((id) => working[c]?.[id])
               .map((id) => ({ id, data: clone(working[c][id]) }));
           },
-          async scan(c, limit = 100, cursor = "") {
+          async scan(c, limit = 100, cursor = "", whereAny) {
             return Object.entries(working[c] || {})
               .sort(([a], [b]) => a.localeCompare(b))
               .filter(([id]) => id > cursor)
+              .filter(
+                ([id, data]) =>
+                  !whereAny ||
+                  whereAny.some(({ field, values }) => {
+                    const value = field === "_id" ? id : data[field];
+                    return Array.isArray(value)
+                      ? value.some((v) => values.includes(v))
+                      : values.includes(value);
+                  }),
+              )
               .slice(0, limit)
               .map(([id, data]) => ({ id, data: clone(data) }));
           },

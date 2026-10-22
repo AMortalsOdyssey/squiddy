@@ -428,8 +428,18 @@ function makeRuntime({
   async function maintenance(event, context) {
     trustedSource(context, "wx_trigger");
     const deadline = maintenanceClock() + 1800;
+    const schedulerRun = {
+      id: crypto.randomBytes(8).toString("hex"),
+      source: context.SOURCE,
+      name: String(event.TriggerName || "").slice(0, 80),
+      type: String(event.Type || "").slice(0, 32),
+      at: Date.now(),
+    };
     let processed = 0;
-    const cursor = await store.transaction(
+    const read = store.read
+      ? store.read.bind(store)
+      : store.transaction.bind(store);
+    const cursor = await read(
       async (tx) => (await tx.get("maintenance_state", "cursors")) || {},
     );
     const batches = [];
@@ -437,8 +447,30 @@ function makeRuntime({
       batches.push({ table, work, limit });
     }
     await batch("cleanup_jobs", async (id, data) => {
-      if (data.status !== "completed")
-        await cleanupBatch(store, id, { batchSize: 5, hash: crypt.hash });
+      if (data.status === "completed") return;
+      let steps = 0,
+        result;
+      do {
+        result = await cleanupBatch(store, id, {
+          batchSize: 20,
+          hash: crypt.hash,
+          coalesceEmpty: true,
+          canContinue: () => maintenanceClock() + 600 < deadline,
+          schedulerRun,
+        });
+        steps++;
+        if (result.status === "completed" || result.phase === "files") break;
+        const reserve =
+          data.kind !== "kitchen" || result.next_table === "media" ? 1200 : 700;
+        if (maintenanceClock() + reserve >= deadline) break;
+      } while (steps < 12);
+      console.info("cleanup.progress", {
+        steps,
+        status: result.status,
+        table: result.table,
+        scanned: result.scanned,
+        removed: result.removed,
+      });
     });
     await batch("media_callbacks", async (id, data) => {
       const result = await applyMediaResult(store, data.event, appid);
@@ -572,7 +604,7 @@ function makeRuntime({
       if (maintenanceClock() >= deadline) break;
       const index = (startBatch + offset) % batches.length;
       const { table, work, limit } = batches[index];
-      const rows = await store.transaction((tx) =>
+      const rows = await read((tx) =>
         tx.scan(table, limit, cursor[table] || ""),
       );
       let visited = 0;
@@ -606,6 +638,15 @@ function makeRuntime({
                 type: "maintenance_item_failure",
                 table,
                 code: safeCode(e),
+                ...(table === "cleanup_jobs"
+                  ? {
+                      provider_detail: String(e?.errMsg || e?.message || "")
+                        .replace(/cloud:\/\/\S+|https?:\/\/\S+/g, "[url]")
+                        .replace(/[a-f0-9]{24,}/gi, "[id]")
+                        .replace(/"[^"]*"|'[^']*'/g, "[value]")
+                        .slice(0, 500),
+                    }
+                  : {}),
                 provider_code: String(e?.errCode || e?.code || "UNAVAILABLE")
                   .replace(/[^a-zA-Z0-9_-]/g, "")
                   .slice(0, 64),

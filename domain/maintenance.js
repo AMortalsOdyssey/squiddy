@@ -3,6 +3,7 @@ const { ensure, input, id } = require("./errors");
 const { referencedByKitchen } = require("./media");
 const { clearActor } = require("./meal-tools");
 const { sha256 } = require("../shared/hash");
+const { getMany } = require("./collections");
 const tables = [
   "feedback",
   "transition_audits",
@@ -82,21 +83,38 @@ async function applyMediaResult(store, event, expectedAppId) {
 async function cleanupBatch(
   store,
   jobId,
-  { removeFile = async () => {}, batchSize = 20, hash = sha256 } = {},
+  {
+    removeFile = async () => {},
+    batchSize = 20,
+    hash = sha256,
+    coalesceEmpty = false,
+    canContinue = () => true,
+    schedulerRun,
+  } = {},
 ) {
   input(Number.isInteger(batchSize) && batchSize > 0 && batchSize <= 50);
   return store.transaction(async (tx) => {
     const job = await tx.get("cleanup_jobs", jobId);
     ensure(job, "NOT_FOUND", "删除任务不存在");
     if (job.status === "completed") return job;
-    const table = tables[job.table];
+    ensure(
+      ["account", "member", "kitchen"].includes(job.kind),
+      "INVALID_STATE",
+      "清理任务类型无效",
+    );
+    id(job.kind === "kitchen" ? job.kitchen_id : job.actor);
+    if (schedulerRun && job.last_scheduler_run?.id !== schedulerRun.id) {
+      job.scheduler_runs = (job.scheduler_runs || 0) + 1;
+      job.last_scheduler_run = schedulerRun;
+      job.started_at ||= Date.now();
+    }
+    let table = tables[job.table];
     if (!table) {
-      for (const fid of job.file_ids || [])
-        if (await tx.get("file_deletions", fid)) {
-          job.status = "running";
-          await tx.put("cleanup_jobs", jobId, job);
-          return { status: "running", phase: "files" };
-        }
+      if ((await getMany(tx, "file_deletions", job.file_ids || [])).size) {
+        job.status = "running";
+        await tx.put("cleanup_jobs", jobId, job);
+        return { status: "running", phase: "files" };
+      }
 
       if (job.kind === "account") {
         await tx.put("users", job.actor, { id: job.actor, status: "deleted" });
@@ -107,10 +125,39 @@ async function cleanupBatch(
       } else if (job.kind === "kitchen")
         await tx.remove("kitchens", job.kitchen_id);
       job.status = "completed";
+      job.completed_at = Date.now();
       await tx.put("cleanup_jobs", jobId, job);
       return job;
     }
-    const rows = await tx.scan(table, batchSize, job.cursor);
+    const scope = (table) =>
+      job.kind === "kitchen"
+        ? table === "users"
+          ? [{ field: "kitchen_ids", values: [job.kitchen_id] }]
+          : [
+              { field: "kitchen_id", values: [job.kitchen_id] },
+              { field: "meal_id", values: job.meal_ids || [] },
+              { field: "_id", values: job.dish_ids || [] },
+              { field: "_id", values: job.meal_ids || [] },
+            ]
+        : ["actor", "user_id", "creator", "participant_ids", "accepted"].map(
+            (field) => ({ field, values: [job.actor] }),
+          );
+    let rows, pageSize;
+    do {
+      // Image reference checks and account/member updates need a smaller batch.
+      pageSize =
+        table === "media"
+          ? Math.min(batchSize, 2)
+          : job.kind === "kitchen" && table !== "users"
+            ? batchSize
+            : Math.min(batchSize, 5);
+      rows = await tx.scan(table, pageSize, job.cursor, scope(table));
+      if (rows.length || !coalesceEmpty) break;
+      job.table++;
+      job.cursor = "";
+      table = tables[job.table];
+    } while (table && canContinue());
+    const removing = [];
     for (const { id: rowId, data: r } of rows) {
       if (table === "users" && job.kind === "kitchen") {
         if (r.kitchen_ids?.includes(job.kitchen_id)) {
@@ -228,7 +275,7 @@ async function cleanupBatch(
             job_id: jobId,
           });
         }
-        await tx.remove(table, rowId);
+        removing.push(rowId);
       } else if (
         ["account", "member"].includes(job.kind) &&
         (job.kind !== "member" || memberScope) &&
@@ -240,17 +287,30 @@ async function cleanupBatch(
       }
       job.cursor = rowId;
     }
-    if (rows.length < batchSize) {
+    if (removing.length) {
+      if (tx.removeMany) await tx.removeMany(table, removing);
+      else for (const id of removing) await tx.remove(table, id);
+    }
+    if (rows.length && rows.length < pageSize) {
+      job.table++;
+      job.cursor = "";
+    } else if (!rows.length && !coalesceEmpty) {
       job.table++;
       job.cursor = "";
     }
     job.status = "running";
+    job.batches = (job.batches || 0) + 1;
+    job.scanned_rows = (job.scanned_rows || 0) + rows.length;
+    job.removed_rows = (job.removed_rows || 0) + removing.length;
     job.last_progress_at = Date.now();
     await tx.put("cleanup_jobs", jobId, job);
     return {
       status: job.status,
       table: job.table,
       total_tables: tables.length,
+      next_table: tables[job.table] || "finalize",
+      scanned: rows.length,
+      removed: removing.length,
     };
   });
 }
