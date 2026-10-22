@@ -621,7 +621,7 @@ function makeRuntime({
         // A media reference check has several transactional reads/writes. Do not
         // start it at the tail of a 3s invocation and repeatedly lose its commit.
         const reserve =
-          table === "media"
+          table === "media" && data.expires_at && data.expires_at <= Date.now()
             ? 1400
             : table === "file_deletions"
               ? 900

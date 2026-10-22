@@ -1153,3 +1153,28 @@ test("损坏的文件清理任务拒绝请求平台，保留脱敏错误且不�
   assert.equal(logs[0].type, "maintenance_item_failure");
   assert.ok(!JSON.stringify(logs).includes("bad-provider-reference"));
 });
+
+test("未到回收期的媒体不预留昂贵处理时间而阻塞后续队列", async () => {
+  const { createMemoryStore } = require("../domain/store");
+  const memory = createMemoryStore({
+    media: { future: { expires_at: Date.now() + 86400000 } },
+    audit_events: { expired: { created_at: 0 } },
+  });
+  let clock = 0;
+  const store = {
+    transaction: (fn) =>
+      memory.transaction((tx) =>
+        fn({
+          ...tx,
+          scan: async (...args) => {
+            clock += 100;
+            return tx.scan(...args);
+          },
+        }),
+      ),
+  };
+  const r = runtime({ store, maintenanceClock: () => clock });
+  await r.maintenance({}, { SOURCE: "wx_trigger" });
+  assert.ok(memory.snapshot().media.future);
+  assert.equal(memory.snapshot().audit_events.expired, undefined);
+});
