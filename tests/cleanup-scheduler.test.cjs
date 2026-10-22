@@ -75,6 +75,12 @@ async function prepared() {
 }
 test("真实调度入口代码按范围回收41餐，不扫描300条无关成员；文件失败时不完成且恢复后完成", async () => {
   const f = await prepared();
+  await f.store.transaction(async (tx) => {
+    for (let i = 0; i < 60; i++)
+      await tx.put("cleanup_jobs", "000-completed-" + i, {
+        status: "completed",
+      });
+  });
   let fail = true,
     deletes = 0;
   const r = makeRuntime({
@@ -89,7 +95,16 @@ test("真实调度入口代码按范围回收41餐，不扫描300条无关成员
     },
     env: { SQUIDDY_APP_ID: APP },
   });
-  for (let i = 0; i < 8; i++)
+  await r.maintenance(
+    { Type: "Timer", TriggerName: "test-only" },
+    { SOURCE: "wx_trigger" },
+  );
+  assert.equal(
+    f.store.snapshot().cleanup_jobs[f.jid].scheduler_runs,
+    1,
+    "60个历史完成任务不能让新任务等待翻页",
+  );
+  for (let i = 0; i < 7; i++)
     await r.maintenance(
       { Type: "Timer", TriggerName: "test-only" },
       { SOURCE: "wx_trigger" },

@@ -604,9 +604,17 @@ function makeRuntime({
       if (maintenanceClock() >= deadline) break;
       const index = (startBatch + offset) % batches.length;
       const { table, work, limit } = batches[index];
-      const rows = await read((tx) =>
-        tx.scan(table, limit, cursor[table] || ""),
+      const scope =
+        table === "cleanup_jobs"
+          ? [{ field: "status", values: ["pending", "running"] }]
+          : undefined;
+      let rows = await read((tx) =>
+        tx.scan(table, limit, cursor[table] || "", scope),
       );
+      if (table === "cleanup_jobs" && !rows.length && cursor[table]) {
+        cursor[table] = "";
+        rows = await read((tx) => tx.scan(table, limit, "", scope));
+      }
       let visited = 0;
       let deferred = false;
       for (const { id, data } of rows) {
