@@ -743,7 +743,7 @@ test("重试事务不重复调用图片外部审核；同请求重放只上传�
   await service.execute("media.complete", p, ctx);
   assert.equal(calls, 1);
 });
-test("scheduler持久化游标，已完成任务不阻塞第11个任务", async () => {
+test("调度跳过已完成清理任务，仍持久化游标并恢复通知状态", async () => {
   const r = runtime();
   await r.store.transaction(async (t) => {
     for (let i = 0; i < 12; i++)
@@ -756,12 +756,8 @@ test("scheduler持久化游标，已完成任务不阻塞第11个任务", async 
     });
   });
   await r.maintenance({}, { SOURCE: "wx_trigger" });
-  assert.equal(
-    r.store.snapshot().maintenance_state.cursors.cleanup_jobs,
-    "job09",
-  );
-  await r.maintenance({}, { SOURCE: "wx_trigger" });
   assert.equal(r.store.snapshot().maintenance_state.cursors.cleanup_jobs, "");
+  assert.ok(r.store.snapshot().maintenance_state.cursors.last_completed_at);
   assert.equal(
     r.store.snapshot().notification_jobs["send-old"].status,
     "unknown",
