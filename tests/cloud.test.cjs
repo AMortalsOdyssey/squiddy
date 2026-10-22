@@ -1178,3 +1178,46 @@ test("未到回收期的媒体不预留昂贵处理时间而阻塞后续队列",
   assert.ok(memory.snapshot().media.future);
   assert.equal(memory.snapshot().audit_events.expired, undefined);
 });
+
+test("关闭厨房的幂等删除批次可使用剩余预算，复杂账号任务仍保守延后", async () => {
+  const { createMemoryStore } = require("../domain/store");
+  for (const kind of ["kitchen", "account"]) {
+    const memory = createMemoryStore({
+      maintenance_state: { cursors: { next_batch: 2 } },
+      kitchens: { k: { status: "closed" } },
+      cleanup_jobs: {
+        job: {
+          kind,
+          actor: "actor",
+          kitchen_id: "k",
+          dish_ids: ["d"],
+          meal_ids: [],
+          status: "pending",
+          table: 14,
+          cursor: "",
+        },
+      },
+      dishes: { d: { kitchen_id: "k" } },
+    });
+    let clock = 0;
+    const store = {
+      transaction: (fn) =>
+        memory.transaction((tx) =>
+          fn({
+            ...tx,
+            scan: async (...args) => {
+              clock += 100;
+              return tx.scan(...args);
+            },
+          }),
+        ),
+    };
+    const r = runtime({ store, maintenanceClock: () => clock });
+    await r.maintenance({}, { SOURCE: "wx_trigger" });
+    if (kind === "kitchen") assert.equal(memory.snapshot().dishes.d, undefined);
+    else {
+      assert.equal(memory.snapshot().cleanup_jobs.job.status, "pending");
+      assert.equal(memory.snapshot().maintenance_state.cursors.next_batch, 0);
+    }
+  }
+});

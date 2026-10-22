@@ -626,7 +626,9 @@ function makeRuntime({
             : table === "file_deletions"
               ? 900
               : table === "cleanup_jobs" && data.status !== "completed"
-                ? 1200
+                ? data.kind === "kitchen"
+                  ? 700
+                  : 1200
                 : 0;
         if (maintenanceClock() + reserve >= deadline) {
           deferred = true;
