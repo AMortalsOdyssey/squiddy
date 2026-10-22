@@ -51,6 +51,37 @@ function runtime(extra = {}) {
   };
 }
 const ctx = { APPID: APP, OPENID: "chef" };
+test("审核45009限额明确提示且不写业务，不误判违规或自动重试，恢复后同请求可完成", async () => {
+  for (const thrown of [true, false]) {
+    const r = runtime();
+    let checks = 0;
+    r.cloud.openapi.security.msgSecCheck = async () => {
+      checks++;
+      if (thrown) throw { errCode: 45009, errMsg: "private-provider-detail" };
+      return { errCode: 45009 };
+    };
+    const event = {
+      action: "kitchen.create",
+      payload: { name: "审核限额厨房", request_id: "quota-recovery" },
+    };
+    const response = await r.handle("api", event, ctx);
+    assert.equal(response.error.code, "CONTENT_RATE_LIMITED");
+    assert.match(response.error.message, /平台调用限制/);
+    assert.equal(checks, 1);
+    assert.equal(Object.keys(r.store.snapshot().kitchens || {}).length, 0);
+    assert.equal(Object.keys(r.store.snapshot().receipts || {}).length, 0);
+    const diagnostic = Object.values(r.store.snapshot().audit_events)[0];
+    assert.equal(diagnostic.provider_code, "45009");
+    assert.equal(diagnostic.operation, "openapi.security.msgSecCheck");
+    assert.ok(!JSON.stringify(diagnostic).includes("private-provider-detail"));
+    r.cloud.openapi.security.msgSecCheck = async () => ({
+      errCode: 0,
+      result: { suggest: "pass" },
+    });
+    assert.equal((await r.handle("api", event, ctx)).ok, true);
+    assert.equal(Object.keys(r.store.snapshot().kitchens).length, 1);
+  }
+});
 test("短时限维护任务轮转队列，繁忙清理队列不会饿死保留期清理", async () => {
   let clock = 0;
   const r = runtime({ maintenanceClock: () => (clock += 400) });

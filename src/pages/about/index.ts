@@ -12,7 +12,7 @@ import {
 Page({
   data: {
     local: isLocal,
-    version: "0.5.0",
+    version: "0.5.1",
     loading: true,
     notify: false,
     stats: { dishes: 0, meals: 0, members: 0 },

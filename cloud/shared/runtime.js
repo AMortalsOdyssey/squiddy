@@ -61,12 +61,33 @@ function makeRuntime({
     expectedAppId: appid,
     notificationConfig,
     moderate: async (content, openid) => {
-      const r = await cloud.openapi.security.msgSecCheck({
-        openid,
-        scene: 4,
-        version: 2,
-        content,
-      });
+      let r;
+      try {
+        r = await cloud.openapi.security.msgSecCheck({
+          openid,
+          scene: 4,
+          version: 2,
+          content,
+        });
+        if (r.errCode !== 0)
+          throw {
+            errCode: r.errCode,
+            errMsg: "openapi.security.msgSecCheck: failed",
+          };
+      } catch (error) {
+        if (Number(error?.errCode) === 45009)
+          throw Object.assign(
+            new AppError(
+              "CONTENT_RATE_LIMITED",
+              "内容审核已达平台调用限制，请稍后再试",
+            ),
+            {
+              errCode: 45009,
+              providerOperation: "openapi.security.msgSecCheck",
+            },
+          );
+        throw error;
+      }
       ensure(
         r.errCode === 0 && r.result?.suggest === "pass",
         "CONTENT_REJECTED",
@@ -619,7 +640,9 @@ function makeRuntime({
         provider_code: String(error?.errCode || error?.code || "")
           .replace(/[^a-zA-Z0-9_-]/g, "")
           .slice(0, 64),
-        operation: String(error?.errMsg || error?.message || "")
+        operation: String(
+          error?.providerOperation || error?.errMsg || error?.message || "",
+        )
           .split(":")[0]
           .replace(/[^a-zA-Z0-9_.-]/g, "")
           .slice(0, 80),
@@ -630,7 +653,7 @@ function makeRuntime({
       });
       // Private operational evidence when the environment has no paid log service.
       // Do not persist request bodies, identities, error messages or stack traces.
-      if (!(error instanceof AppError)) {
+      if (!(error instanceof AppError) || error.providerOperation) {
         try {
           const id = crypto.randomBytes(12).toString("hex");
           await store.transaction((tx) =>

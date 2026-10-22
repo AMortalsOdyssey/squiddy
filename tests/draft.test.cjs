@@ -8,6 +8,73 @@ global.wx = {
   showToast: () => {},
 };
 const api = require("../miniprogram/services/api");
+test("启动清理不使用同步文件API，新图片等待旧文件清理，备份文件保留", async () => {
+  const fs = require("node:fs"),
+    vm = require("node:vm"),
+    { createRequire } = require("node:module");
+  const file = require.resolve("../miniprogram/services/api"),
+    ownRequire = createRequire(file);
+  const files = new Map([
+    ["/test/squiddy-media-one.jpg", "old"],
+    ["/test/backup.zip", "keep"],
+  ]);
+  let directory,
+    deletion,
+    calls = 0;
+  const manager = {
+    readdir: (options) => {
+      directory = options;
+    },
+    unlink: (options) => {
+      deletion = options;
+    },
+    readdirSync: () => {
+      throw Error("must not block startup");
+    },
+    unlinkSync: () => {
+      throw Error("must not block startup");
+    },
+    writeFile: ({ filePath, data, success }) => {
+      files.set(filePath, data);
+      success();
+    },
+  };
+  const module = { exports: {} };
+  vm.runInNewContext(fs.readFileSync(file, "utf8"), {
+    module,
+    exports: module.exports,
+    require: (id) =>
+      id === "../config/runtime" ? { mode: "cloud" } : ownRequire(id),
+    console,
+    wx: {
+      env: { USER_DATA_PATH: "/test" },
+      getFileSystemManager: () => manager,
+      cloud: {
+        callFunction: async () => {
+          calls++;
+          return {
+            result: { ok: true, data: { base64: "fresh", type: "jpeg" } },
+          };
+        },
+      },
+    },
+  });
+  const cloudApi = module.exports;
+  const cleanup = cloudApi.clearMediaFilesAtLaunch();
+  const rendering = cloudApi.mediaImage("one");
+  await Promise.resolve();
+  assert.equal(calls, 0);
+  directory.success({ files: ["squiddy-media-one.jpg", "backup.zip"] });
+  assert.equal(deletion.filePath, "/test/squiddy-media-one.jpg");
+  assert.equal(calls, 0);
+  files.delete(deletion.filePath);
+  deletion.complete();
+  await cleanup;
+  assert.equal(await rendering, "/test/squiddy-media-one.jpg");
+  assert.equal(calls, 1);
+  assert.equal(files.get("/test/squiddy-media-one.jpg"), "fresh");
+  assert.equal(files.get("/test/backup.zip"), "keep");
+});
 test("实际草稿模块拒绝损坏数量、重复菜品并白名单过滤价格", () => {
   const id = "draft1";
   data.set(api.draftKey(id), {

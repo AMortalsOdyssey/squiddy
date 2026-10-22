@@ -276,6 +276,41 @@ export const statusLabel = (status: string, served = 0): string =>
     archived: "已归档",
   })[status] || status;
 const mediaFiles = new Set<string>();
+let startupMediaCleanup: Promise<void> = Promise.resolve();
+export function clearMediaFilesAtLaunch() {
+  mediaFiles.clear();
+  startupMediaCleanup = new Promise<void>((resolve) => {
+    try {
+      const fs = wx.getFileSystemManager();
+      fs.readdir({
+        dirPath: wx.env.USER_DATA_PATH,
+        success(result) {
+          const names = result.files.filter((name) =>
+            /^squiddy-media-[a-zA-Z0-9_-]+\.jpg$/.test(name),
+          );
+          let at = 0;
+          const next = () => {
+            if (at === names.length) {
+              resolve();
+              return;
+            }
+            const filePath = wx.env.USER_DATA_PATH + "/" + names[at++];
+            try {
+              fs.unlink({ filePath, complete: next });
+            } catch {
+              next();
+            }
+          };
+          next();
+        },
+        fail: () => resolve(),
+      });
+    } catch {
+      resolve();
+    }
+  });
+  return startupMediaCleanup;
+}
 export function clearMediaFiles() {
   try {
     const fs = wx.getFileSystemManager();
@@ -289,6 +324,8 @@ export async function mediaImage(id: string) {
   if (!id) return "";
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id)) return "";
   try {
+    // A late startup unlink must never remove the fresh file written below.
+    await startupMediaCleanup;
     if (isLocal) {
       const m = await call("media.read", { media_id: id });
       return m.status === "approved" ? m.file_id : "";

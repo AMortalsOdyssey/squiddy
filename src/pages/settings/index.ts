@@ -7,8 +7,11 @@ import {
   clearMediaFiles,
 } from "../../services/api";
 import { clearLocalBackups } from "../../services/backup";
+import { exportPersonal } from "../../services/personal-export";
 Page({
   _visible: true,
+  _exportRun: 0,
+  _exportText: "",
   data: {
     local: isLocal,
     busy: false,
@@ -17,6 +20,8 @@ Page({
     feedback: "",
     feedbackId: "",
     exportText: "",
+    exportTruncated: false,
+    exportProgress: "",
     deletionStatus: "",
     feedbackItems: [] as any[],
     feedbackLookup: "",
@@ -30,7 +35,18 @@ Page({
   },
   onHide() {
     this._visible = false;
-    this.setData({ exportText: "", exportPath: "", feedbackItems: [] });
+    this._exportRun++;
+    this._exportText = "";
+    this.setData({
+      exportText: "",
+      exportPath: "",
+      exportProgress: "",
+      exportTruncated: false,
+      feedbackItems: [],
+    });
+  },
+  onUnload() {
+    this.onHide();
   },
   togglePrivacy() {
     this.setData({ privacyExpanded: !this.data.privacyExpanded });
@@ -99,9 +115,24 @@ Page({
   },
   async exportData() {
     if (this.data.busy) return;
-    this.setData({ busy: true });
+    const run = ++this._exportRun;
+    this._exportText = "";
+    const cancelled = () => !this._visible || run !== this._exportRun;
+    this.setData({
+      busy: true,
+      exportText: "",
+      exportPath: "",
+      exportTruncated: false,
+      exportProgress: "正在准备分批导出",
+    });
     try {
-      const r = await call("export.mine");
+      const r = await exportPersonal({
+        cancelled,
+        progress: (message) => {
+          if (!cancelled()) this.setData({ exportProgress: message });
+        },
+      });
+      if (cancelled()) return;
       const text = JSON.stringify(r, null, 2);
       const path = wx.env.USER_DATA_PATH + "/squiddy-export.json";
       await new Promise<void>((resolve, reject) =>
@@ -113,7 +144,18 @@ Page({
           fail: reject,
         }),
       );
-      this.setData({ exportText: text, exportPath: path });
+      if (cancelled()) {
+        try {
+          wx.getFileSystemManager().unlinkSync(path);
+        } catch {}
+        return;
+      }
+      this._exportText = text;
+      this.setData({
+        exportText: text.slice(0, 4096),
+        exportPath: path,
+        exportTruncated: text.length > 4096,
+      });
       wx.showToast({ title: "导出文件已保存" });
       await wx.showModal({
         title: "导出已准备好",
@@ -122,9 +164,9 @@ Page({
         showCancel: false,
       });
     } catch (e) {
-      failure(e);
+      if (!cancelled()) failure(e);
     } finally {
-      this.setData({ busy: false });
+      this.setData({ busy: false, exportProgress: "" });
     }
   },
   feedbackInput(e: WechatMiniprogram.Input) {
@@ -147,8 +189,13 @@ Page({
     }
   },
   async copy() {
-    if (this.data.exportText)
-      await wx.setClipboardData({ data: this.data.exportText });
+    if (this._exportText) {
+      try {
+        await wx.setClipboardData({ data: this._exportText });
+      } catch (e) {
+        failure(e);
+      }
+    }
   },
   async remove() {
     const c = await wx.showModal({
@@ -162,6 +209,7 @@ Page({
     this.setData({ busy: true });
     try {
       await mutate("account.delete");
+      this._exportText = "";
       clearMediaFiles();
       clearLocalBackups();
       chooseKitchen("");
@@ -181,7 +229,7 @@ Page({
           wx.env.USER_DATA_PATH + "/squiddy-export.json",
         );
       } catch {}
-      this.setData({ exportText: "", exportPath: "" });
+      this.setData({ exportText: "", exportPath: "", exportTruncated: false });
       if (isLocal) await require("../../services/local").localCleanup();
       await this.status();
     } catch (e) {

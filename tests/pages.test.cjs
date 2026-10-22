@@ -197,6 +197,26 @@ test("实际页面处理器全流程：建厨菜谱→三角色邀请→弱网�
   assert.equal(files.size, 0);
   assert.equal((await api.call("account.deletionStatus")).status, "completed");
 });
+test("JSON完整文件与复制不被预览截断，页面最多渲染4096字并在离页清空私有文本", async () => {
+  local.selectActor("chef");
+  const settings = page("settings");
+  await settings.exportData();
+  const full = files.get(settings.data.exportPath);
+  assert.ok(full.length > 4096);
+  assert.equal(settings.data.exportText.length, 4096);
+  assert.equal(settings.data.exportTruncated, true);
+  assert.equal(JSON.parse(full).kitchens[0].meals.length, 2);
+  let copied;
+  wx.setClipboardData = async ({ data }) => {
+    copied = data;
+  };
+  await settings.copy();
+  assert.equal(copied, full);
+  settings.onHide();
+  assert.equal(settings._exportText, "");
+  assert.equal(settings.data.exportText, "");
+  assert.equal(settings.data.exportTruncated, false);
+});
 test("本地海报真正执行绘制与导出，不生成虚假小程序码", async () => {
   local.selectActor("chef");
   const m = await api.meal();

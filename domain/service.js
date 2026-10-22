@@ -2049,6 +2049,61 @@ function createService({
           break;
         }
         case "export.mine": {
+          if (payload.section === "meals") {
+            keys(payload, ["request_id", "section", "kitchen_id", "cursor"]);
+            result = await readBackup(
+              { ...payload, section: "meals" },
+              {
+                tx,
+                actor,
+                user,
+                kitchenAccess,
+                readMeal,
+                participantKey,
+                hash: crypto.hash,
+              },
+            );
+            break;
+          }
+          keys(payload, ["request_id", "section"]);
+          input(
+            !payload.section || payload.section === "profile",
+            "未知导出内容",
+          );
+          if (payload.section === "profile") {
+            const rows = await getMany(tx, "kitchens", user.kitchen_ids);
+            const members = await getMany(
+              tx,
+              "memberships",
+              user.kitchen_ids.map((kid) => memberKey(kid, actor)),
+            );
+            result = {
+              name: user.name,
+              exported_at: now,
+              favorite_recipe_ids: (user.favorite_recipe_ids || []).slice(),
+              kitchens: user.kitchen_ids
+                .filter(
+                  (kid) =>
+                    rows.get(kid)?.status === "active" &&
+                    members.get(memberKey(kid, actor))?.status === "active",
+                )
+                .map((kid) => ({
+                  id: kid,
+                  name: rows.get(kid).name,
+                  role: members.get(memberKey(kid, actor)).role,
+                })),
+            };
+            break;
+          }
+          const oldKitchens = await getMany(tx, "kitchens", user.kitchen_ids);
+          ensure(
+            [...oldKitchens.values()].reduce(
+              (n, k) => n + (k.meal_ids?.length || 0),
+              0,
+            ) <= 1,
+            "EXPORT_PAGINATION_REQUIRED",
+            "记录较多，请使用最新版分批导出或完整厨房备份",
+          );
           const kitchens = [];
           for (const kid of user.kitchen_ids) {
             const { kitchen: k, member } = await kitchenAccess(tx, kid, actor);
