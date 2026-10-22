@@ -11,6 +11,19 @@ const {
   processNotification,
 } = require("../domain/maintenance");
 const safeCode = (e) => (e instanceof AppError ? e.code : "UNAVAILABLE");
+function moderationQuotaScope(error) {
+  // Store only a fixed category. Provider messages can contain private data;
+  // generic "api freq out of limit" does not identify the quota window.
+  const message = [error?.errMsg, error?.message]
+    .filter((v) => typeof v === "string")
+    .map((v) => v.slice(0, 2000))
+    .join(" ");
+  const daily = /daily[ -]quota|每日.{0,12}(额度|上限)/i.test(message);
+  const minute = /minute[ -]quota|per minute|分钟.{0,12}(频率|限制)/i.test(
+    message,
+  );
+  return daily === minute ? "unknown" : daily ? "daily" : "minute";
+}
 function trustedSource(context, expected) {
   ensure(
     expected &&
@@ -72,7 +85,8 @@ function makeRuntime({
         if (r.errCode !== 0)
           throw {
             errCode: r.errCode,
-            errMsg: "openapi.security.msgSecCheck: failed",
+            errMsg: r.errMsg,
+            providerOperation: "openapi.security.msgSecCheck",
           };
       } catch (error) {
         if (Number(error?.errCode) === 45009)
@@ -84,6 +98,7 @@ function makeRuntime({
             {
               errCode: 45009,
               providerOperation: "openapi.security.msgSecCheck",
+              providerQuotaScope: moderationQuotaScope(error),
             },
           );
         throw error;
@@ -647,6 +662,10 @@ function makeRuntime({
           .replace(/[^a-zA-Z0-9_.-]/g, "")
           .slice(0, 80),
         elapsed_ms: Date.now() - start,
+        ...(error?.providerOperation === "openapi.security.msgSecCheck" &&
+        ["daily", "minute", "unknown"].includes(error.providerQuotaScope)
+          ? { provider_quota_scope: error.providerQuotaScope }
+          : {}),
       };
       console.warn("request.failed", {
         ...diagnostic,

@@ -73,6 +73,7 @@ test("审核45009限额明确提示且不写业务，不误判违规或自动重
     const diagnostic = Object.values(r.store.snapshot().audit_events)[0];
     assert.equal(diagnostic.provider_code, "45009");
     assert.equal(diagnostic.operation, "openapi.security.msgSecCheck");
+    assert.equal(diagnostic.provider_quota_scope, "unknown");
     assert.ok(!JSON.stringify(diagnostic).includes("private-provider-detail"));
     r.cloud.openapi.security.msgSecCheck = async () => ({
       errCode: 0,
@@ -81,6 +82,39 @@ test("审核45009限额明确提示且不写业务，不误判违规或自动重
     assert.equal((await r.handle("api", event, ctx)).ok, true);
     assert.equal(Object.keys(r.store.snapshot().kitchens).length, 1);
   }
+});
+test("审核额度诊断只提取明确的日或分钟含义，泛化限频与冲突说明保持未知", async () => {
+  for (const thrown of [true, false])
+    for (const [message, scope] of [
+      ["reach max api daily quota limit", "daily"],
+      ["api minute-quota reach limit must slower retry next minute", "minute"],
+      ["api freq out of limit", "unknown"],
+      ["daily quota; minute-quota", "unknown"],
+      ["", "unknown"],
+    ]) {
+      const r = runtime();
+      r.cloud.openapi.security.msgSecCheck = async () => {
+        const result = {
+          errCode: 45009,
+          errMsg: message + " private-identity-content",
+        };
+        if (thrown) throw result;
+        return result;
+      };
+      const response = await r.handle(
+        "api",
+        {
+          action: "kitchen.create",
+          payload: { name: "额度诊断", request_id: "quota-scope" },
+        },
+        ctx,
+      );
+      assert.equal(response.error.code, "CONTENT_RATE_LIMITED");
+      const audit = Object.values(r.store.snapshot().audit_events)[0];
+      assert.equal(audit.provider_quota_scope, scope);
+      assert.ok(!JSON.stringify(audit).includes("private-identity-content"));
+      assert.equal(Object.keys(r.store.snapshot().kitchens || {}).length, 0);
+    }
 });
 test("短时限维护任务轮转队列，繁忙清理队列不会饿死保留期清理", async () => {
   let clock = 0;
@@ -96,6 +130,92 @@ test("短时限维护任务轮转队列，繁忙清理队列不会饿死保留�
     await r.maintenance({}, { SOURCE: "wx_trigger" });
   assert.equal(r.store.snapshot().audit_events.expired, undefined);
   assert.ok(r.store.snapshot().maintenance_state.cursors.last_completed_at > 0);
+});
+test("完整运行时满40场拒绝有效第41场，释放名额后审核日额度失败不占位，恢复后原请求仅发布一次", async () => {
+  const r = runtime();
+  let request = 0;
+  const call = (action, payload) =>
+    r.handle(
+      "api",
+      {
+        action,
+        payload: { request_id: "capacity-runtime-" + ++request, ...payload },
+      },
+      ctx,
+    );
+  const kitchen = await call("kitchen.create", { name: "运行时容量厨房" });
+  assert.equal(kitchen.ok, true);
+  const kid = kitchen.data.id;
+  const dish = await call("dish.save", {
+    kitchen_id: kid,
+    name: "容量菜",
+    category: "vegetable",
+    ingredients: ["番茄"],
+    allergens: [],
+    minutes: 10,
+  });
+  assert.equal(dish.ok, true);
+  const payload = {
+    kitchen_id: kid,
+    title: "有效容量饭局",
+    dish_ids: [dish.data.id],
+    scheduled_at: Date.now() + 7200000,
+    cutoff_at: Date.now() + 3600000,
+  };
+  const meals = [];
+  for (let i = 0; i < 40; i++) {
+    const meal = await call("meal.publish", payload);
+    assert.equal(meal.ok, true);
+    meals.push(meal.data.id);
+  }
+  const business = () => {
+    const s = r.store.snapshot();
+    return {
+      meals: s.meals,
+      prices: s.meal_prices,
+      participants: s.meal_memberships,
+      kitchen: s.kitchens[kid],
+      receipts: s.receipts,
+    };
+  };
+  const full = business();
+  const denied = await call("meal.publish", payload);
+  assert.equal(denied.error.code, "INVALID_INPUT");
+  assert.match(denied.error.message, /40场/);
+  assert.deepEqual(business(), full);
+  assert.equal(
+    (
+      await call("meal.cancel", {
+        meal_id: meals[0],
+        expected_revision: 1,
+      })
+    ).ok,
+    true,
+  );
+  assert.equal(business().kitchen.active_meal_ids.length, 39);
+  const beforeAuditFailure = business();
+  r.cloud.openapi.security.msgSecCheck = async () => {
+    throw { errCode: 45009, errMsg: "reach max api daily quota limit" };
+  };
+  const retry = { ...payload, request_id: "capacity-release-retry" };
+  assert.equal(
+    (await call("meal.publish", retry)).error.code,
+    "CONTENT_RATE_LIMITED",
+  );
+  assert.deepEqual(business(), beforeAuditFailure);
+  r.cloud.openapi.security.msgSecCheck = async () => ({
+    errCode: 0,
+    result: { suggest: "pass" },
+  });
+  const recovered = await call("meal.publish", retry);
+  assert.equal(recovered.ok, true);
+  assert.deepEqual((await call("meal.publish", retry)).data, recovered.data);
+  assert.equal(business().kitchen.active_meal_ids.length, 40);
+  assert.equal(Object.keys(business().meals).length, 41);
+  assert.equal(
+    (await call("meal.publish", payload)).error.code,
+    "INVALID_INPUT",
+  );
 });
 test("平台异常只保留私有诊断码，不记录输入或错误正文", async () => {
   const r = runtime();
@@ -121,6 +241,26 @@ test("平台异常只保留私有诊断码，不记录输入或错误正文", as
   assert.ok(!JSON.stringify(diagnostics).includes("private-payload"));
   assert.ok(!JSON.stringify(diagnostics).includes("私人厨房"));
   assert.ok(!JSON.stringify(diagnostics).includes("chef"));
+});
+test("审核非零返回值保留固定操作名，不将平台原文当操作名持久化", async () => {
+  const r = runtime();
+  r.cloud.openapi.security.msgSecCheck = async () => ({
+    errCode: -604101,
+    errMsg: "private-payload-and-identity",
+  });
+  const response = await r.handle(
+    "api",
+    {
+      action: "kitchen.create",
+      payload: { name: "私人厨房", request_id: "returned-private-error" },
+    },
+    ctx,
+  );
+  assert.equal(response.error.code, "UNAVAILABLE");
+  const diagnostic = Object.values(r.store.snapshot().audit_events)[0];
+  assert.equal(diagnostic.operation, "openapi.security.msgSecCheck");
+  assert.equal(diagnostic.provider_code, "-604101");
+  assert.ok(!JSON.stringify(diagnostic).includes("private-payload"));
 });
 test("云入口只信SDK身份，公开入口不暴露通用业务动作", async () => {
   const r = runtime();
