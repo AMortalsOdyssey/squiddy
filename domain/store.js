@@ -20,9 +20,6 @@ function createMemoryStore(initial = {}, onCommit = () => {}) {
           async remove(c, id) {
             if (working[c]) delete working[c][id];
           },
-          async removeMany(c, ids) {
-            for (const id of ids) if (working[c]) delete working[c][id];
-          },
           async getMany(c, ids) {
             return [...new Set(ids)]
               .filter((id) => working[c]?.[id])

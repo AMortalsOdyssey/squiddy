@@ -150,8 +150,8 @@ test("批量删除失败回滚文档和游标；重入不会跳过未删记录",
       memory.transaction((tx) =>
         fn({
           ...tx,
-          removeMany: async (c, ids) => {
-            await tx.remove(c, ids[0]);
+          remove: async (c, id) => {
+            await tx.remove(c, id);
             throw Error("bulk failed");
           },
         }),
@@ -180,42 +180,83 @@ test("空过滤条件不扫描全库，游标与资源筛选同时生效", async
     );
   });
 });
-test("云适配器使用事务内主键删除，失败会拒绝整个推进而不调用非事务条件删除", async () => {
-  const { cloudStore } = require("../cloud/shared/store");
-  const pending = new Set(),
-    removed = [],
-    original = ["a", "b", "c"];
-  let fail = true,
-    committed = [...original];
-  const db = {
-    runTransaction: async (fn) => {
-      pending.clear();
-      const result = await fn({
-        collection: () => ({
-          where: () => {
-            throw Error("non-transactional query remove");
-          },
-          doc: (id) => ({
-            remove: async () => {
-              removed.push(id);
-              if (fail && id === "b") throw Error("delete failed");
-              pending.add(id);
-            },
-          }),
-        }),
+test("关闭厨房的持久删除批次在删后丢回执时保留游标，重入只提交一次进度", async () => {
+  const memory = createMemoryStore({
+    kitchens: {
+      k: { id: "k", status: "closed" },
+      original: { status: "active" },
+    },
+    cleanup_jobs: {
+      job: {
+        kind: "kitchen",
+        kitchen_id: "k",
+        dish_ids: ["d1", "d2"],
+        meal_ids: [],
+        table: 14,
+        cursor: "",
+        status: "pending",
+      },
+    },
+    dishes: {
+      d1: { kitchen_id: "k" },
+      d2: { kitchen_id: "k" },
+      foreign: { kitchen_id: "original" },
+    },
+  });
+  let loseAck = true;
+  const store = {
+    ...memory,
+    removeClosedKitchenRows: async (table, ids) => {
+      await memory.transaction(async (tx) => {
+        for (const id of ids) await tx.remove(table, id);
       });
-      committed = original.filter((id) => !pending.has(id));
-      return result;
+      if (loseAck) throw Error("ack lost after deletion");
     },
   };
-  const store = cloudStore(db);
+  await assert.rejects(cleanupBatch(store, "job"), /ack lost/);
+  let s = memory.snapshot();
+  assert.deepEqual(Object.keys(s.dishes), ["foreign"]);
+  assert.equal(s.cleanup_jobs.job.table, 14);
+  assert.equal(s.cleanup_jobs.job.cursor, "");
+  assert.deepEqual(s.cleanup_jobs.job.pending_delete.ids, ["d1", "d2"]);
+  loseAck = false;
+  await cleanupBatch(store, "job");
+  s = memory.snapshot();
+  assert.equal(s.cleanup_jobs.job.table, 15);
+  assert.equal(s.cleanup_jobs.job.pending_delete, undefined);
+  assert.equal(s.cleanup_jobs.job.removed_rows, 2);
+  await cleanupBatch(store, "job");
+  assert.equal(memory.snapshot().cleanup_jobs.job.removed_rows, 2);
+  assert.ok(memory.snapshot().kitchens.original);
+});
+test("活跃厨房不能进入非事务批量删除阶段", async () => {
+  const memory = createMemoryStore({
+    kitchens: { k: { status: "active" } },
+    cleanup_jobs: {
+      job: {
+        kind: "kitchen",
+        kitchen_id: "k",
+        dish_ids: ["d"],
+        meal_ids: [],
+        table: 14,
+        cursor: "",
+        status: "pending",
+      },
+    },
+    dishes: { d: { kitchen_id: "k" } },
+  });
+  let deletes = 0;
+  const store = {
+    ...memory,
+    removeClosedKitchenRows: async () => {
+      deletes++;
+    },
+  };
   await assert.rejects(
-    store.transaction((tx) => tx.removeMany("rows", original)),
-    /delete failed/,
+    cleanupBatch(store, "job"),
+    (e) => e.code === "INVALID_STATE",
   );
-  assert.deepEqual(committed, original);
-  fail = false;
-  await store.transaction((tx) => tx.removeMany("rows", original));
-  assert.deepEqual(committed, []);
-  assert.deepEqual(new Set(removed), new Set(original));
+  assert.equal(deletes, 0);
+  assert.ok(memory.snapshot().dishes.d);
+  assert.equal(memory.snapshot().cleanup_jobs.job.pending_delete, undefined);
 });

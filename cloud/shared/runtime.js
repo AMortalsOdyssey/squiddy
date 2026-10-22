@@ -452,7 +452,7 @@ function makeRuntime({
         result;
       do {
         result = await cleanupBatch(store, id, {
-          batchSize: 20,
+          batchSize: 50,
           hash: crypt.hash,
           coalesceEmpty: true,
           canContinue: () => maintenanceClock() + 600 < deadline,

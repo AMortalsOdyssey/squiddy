@@ -93,7 +93,7 @@ async function cleanupBatch(
   } = {},
 ) {
   input(Number.isInteger(batchSize) && batchSize > 0 && batchSize <= 50);
-  return store.transaction(async (tx) => {
+  const result = await store.transaction(async (tx) => {
     const job = await tx.get("cleanup_jobs", jobId);
     ensure(job, "NOT_FOUND", "删除任务不存在");
     if (job.status === "completed") return job;
@@ -108,6 +108,16 @@ async function cleanupBatch(
       job.last_scheduler_run = schedulerRun;
       job.started_at ||= Date.now();
     }
+    if (job.pending_delete) {
+      ensure(job.kind === "kitchen", "INVALID_STATE", "清理批次类型无效");
+      ensure(
+        (await tx.get("kitchens", job.kitchen_id))?.status === "closed",
+        "INVALID_STATE",
+        "只能回收已关闭厨房",
+      );
+      return { pending_delete: job.pending_delete };
+    }
+    const before = { table: job.table, cursor: job.cursor };
     let table = tables[job.table];
     if (!table) {
       if ((await getMany(tx, "file_deletions", job.file_ids || [])).size) {
@@ -287,10 +297,6 @@ async function cleanupBatch(
       }
       job.cursor = rowId;
     }
-    if (removing.length) {
-      if (tx.removeMany) await tx.removeMany(table, removing);
-      else for (const id of removing) await tx.remove(table, id);
-    }
     if (rows.length && rows.length < pageSize) {
       job.table++;
       job.cursor = "";
@@ -298,6 +304,31 @@ async function cleanupBatch(
       job.table++;
       job.cursor = "";
     }
+    if (
+      removing.length &&
+      job.kind === "kitchen" &&
+      table !== "media" &&
+      store.removeClosedKitchenRows
+    ) {
+      ensure(
+        (await tx.get("kitchens", job.kitchen_id))?.status === "closed",
+        "INVALID_STATE",
+        "只能回收已关闭厨房",
+      );
+      job.pending_delete = {
+        token: hash(jobId + ":" + table + ":" + removing.join(",")),
+        table,
+        ids: removing,
+        after: { table: job.table, cursor: job.cursor },
+        scanned: rows.length,
+      };
+      job.table = before.table;
+      job.cursor = before.cursor;
+      job.status = "running";
+      await tx.put("cleanup_jobs", jobId, job);
+      return { pending_delete: job.pending_delete };
+    }
+    for (const id of removing) await tx.remove(table, id);
     job.status = "running";
     job.batches = (job.batches || 0) + 1;
     job.scanned_rows = (job.scanned_rows || 0) + rows.length;
@@ -311,6 +342,46 @@ async function cleanupBatch(
       next_table: tables[job.table] || "finalize",
       scanned: rows.length,
       removed: removing.length,
+    };
+  });
+  if (result.status === "completed" || !result.pending_delete) return result;
+  const pending = result.pending_delete;
+  ensure(
+    store.removeClosedKitchenRows &&
+      tables.includes(pending.table) &&
+      pending.table !== "media" &&
+      pending.table !== "users" &&
+      Array.isArray(pending.ids) &&
+      pending.ids.length > 0 &&
+      pending.ids.length <= 50,
+    "INVALID_STATE",
+    "清理批次无效",
+  );
+  for (const value of pending.ids) id(value);
+  await store.removeClosedKitchenRows(pending.table, pending.ids);
+  return store.transaction(async (tx) => {
+    const job = await tx.get("cleanup_jobs", jobId);
+    ensure(job?.kind === "kitchen", "INVALID_STATE", "清理任务无效");
+    if (job.status === "completed") return job;
+    if (job.pending_delete?.token !== pending.token)
+      return {
+        status: job.status,
+        next_table: tables[job.table] || "finalize",
+      };
+    job.table = pending.after.table;
+    job.cursor = pending.after.cursor;
+    job.batches = (job.batches || 0) + 1;
+    job.scanned_rows = (job.scanned_rows || 0) + pending.scanned;
+    job.removed_rows = (job.removed_rows || 0) + pending.ids.length;
+    job.last_progress_at = Date.now();
+    delete job.pending_delete;
+    await tx.put("cleanup_jobs", jobId, job);
+    return {
+      status: job.status,
+      table: job.table,
+      next_table: tables[job.table] || "finalize",
+      scanned: pending.scanned,
+      removed: pending.ids.length,
     };
   });
 }

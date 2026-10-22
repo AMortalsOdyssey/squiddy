@@ -28,13 +28,6 @@ function cloudStore(db) {
     async remove(table, id) {
       await transaction.collection(table).doc(id).remove();
     },
-    async removeMany(table, ids) {
-      // The bundled SDK's Query.remove omits transactionId. Only document
-      // removals participate in rollback with the cleanup cursor write.
-      // CloudBase rejects parallel operations in one transaction (TransactionBusy).
-      for (const id of ids)
-        await transaction.collection(table).doc(id).remove();
-    },
     async getMany(table, ids) {
       if (!ids.length) return [];
       const result = await transaction
@@ -73,6 +66,17 @@ function cloudStore(db) {
     read: (fn) => {
       const { get, getMany, scan } = adapter(db);
       return fn({ get, getMany, scan });
+    },
+    async removeClosedKitchenRows(table, ids) {
+      // Used only after cleanupBatch durably records exact IDs for a closed
+      // kitchen. Repeating this phase after an unknown result is idempotent.
+      if (!ids.length || ids.length > 50) throw Error("Invalid cleanup batch");
+      await db
+        .collection(table)
+        .where({ _id: db.command.in(ids) })
+        .remove();
+      const remaining = await adapter(db).getMany(table, ids);
+      if (remaining.length) throw Error("Cleanup batch deletion incomplete");
     },
   };
 }
