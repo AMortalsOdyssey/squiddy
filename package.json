@@ -13,7 +13,8 @@
     "audit:all": "node scripts/audit.mjs",
     "backup:run": "node scripts/backup-run.cjs run",
     "backup:status": "node scripts/backup-run.cjs status",
-    "health:cloud": "node scripts/health.cjs"
+    "health:cloud": "node scripts/health.cjs",
+    "quota:query": "node scripts/wechat-quota.cjs"
   },
   "devDependencies": {
     "miniprogram-api-typings": "5.2.3",
